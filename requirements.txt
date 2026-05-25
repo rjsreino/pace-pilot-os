@@ -1,0 +1,4 @@
+garminconnect
+requests
+python-dotenv
+pydantic

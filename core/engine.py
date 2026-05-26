@@ -309,23 +309,71 @@ Decision Directives:
 
 # ==========================================
 
+def stem_word(w: str) -> str:
+    """
+    Applies simple English suffix stemming rules to find the base form of a word.
+    Handles common running biometrics terms (e.g. 'pulled' -> 'pull', 'soreness' -> 'sore').
+    """
+    w_lower = w.lower()
+    
+    # Noun suffixes
+    if w_lower.endswith("ness") and len(w_lower) > 6:
+        # e.g. soreness -> sore
+        return w_lower[:-4]
+        
+    # Plural / singular
+    if w_lower.endswith("ies") and len(w_lower) > 5:
+        return w_lower[:-3] + "y"
+    if w_lower.endswith("es") and len(w_lower) > 4:
+        if w_lower.endswith("aches"):
+            return "ache"
+        return w_lower[:-2]
+    if w_lower.endswith("s") and not w_lower.endswith("ss") and len(w_lower) > 2:
+        return w_lower[:-1]
+        
+    # Past tense
+    if w_lower.endswith("ed") and len(w_lower) > 4:
+        if w_lower.endswith("ied"):
+            return w_lower[:-3] + "y"
+        stemmed = w_lower[:-2]
+        # Double consonant check for short verbs (e.g. stopped -> stop, but not pulled -> pull)
+        if len(stemmed) > 3 and stemmed[-1] == stemmed[-2]:
+            if stemmed[-1] in {"g", "n", "p", "t", "d", "b", "r"}:
+                return stemmed[:-1]
+        return stemmed
+        
+    # Gerund / continuous
+    if w_lower.endswith("ing") and len(w_lower) > 5:
+        stemmed = w_lower[:-3]
+        # Double consonant check (e.g. running -> run, jogging -> jog)
+        if len(stemmed) > 3 and stemmed[-1] == stemmed[-2]:
+            if stemmed[-1] in {"g", "n", "p", "t", "d", "b", "r"}:
+                stemmed = stemmed[:-1]
+        # Handle cases like aching -> ache, twinging -> twinge
+        if stemmed in {"ach", "twing", "tir"}:
+            return stemmed + "e"
+        return stemmed
+        
+    return w_lower
+
+
 def detect_sentiment(feedback: str) -> str:
     """
     Parses subjective athlete feedback, classifying it into pain, fatigue, 
-    high-energy, or neutral sentiment. Uses negation-aware keyword context 
-    matching and a relative scoring algorithm to prevent false-positives 
+    high-energy, or neutral sentiment. Uses stemming, negation-aware keyword context 
+    matching, and a relative scoring algorithm to prevent false-positives 
     (e.g., 'not tired' or 'no pain' triggering fatigue/pain).
     """
     feedback_lower = feedback.lower()
     
-    # 1. Pain / injury indicators
-    pain_keywords = {"sore", "pain", "hurt", "tight", "stiff", "cramp", "ach", "injury", "ache", "aches", "hurts", "soreness", "twinge", "pull"}
+    # 1. Pain / injury indicators (base forms)
+    pain_keywords = {"sore", "pain", "hurt", "tight", "stiff", "cramp", "ach", "injury", "ache", "twinge", "pull"}
     
-    # 2. Fatigue / exhaustion / severe under-recovery indicators
+    # 2. Fatigue / exhaustion / severe under-recovery indicators (base forms)
     fatigue_keywords = {
         "tired", "exhausted", "fatigue", "sleepy", "weak", "heavy", 
         "dead", "wrecked", "lazy", "beat", "flat", "stuck", "drained", 
-        "sluggish", "bad", "terrible", "horrible", "awful", "poor", "exhaustion"
+        "sluggish", "bad", "terrible", "horrible", "awful", "poor", "exhaustion", "tire"
     }
     
     # 3. High energy / readiness indicators (including positive exercise/movement verbs)
@@ -347,6 +395,9 @@ def detect_sentiment(feedback: str) -> str:
     energy_score = 0
     
     for i, w in enumerate(words):
+        # Apply simple stemming to find base form
+        stemmed = stem_word(w)
+        
         # Check if this word is preceded by a negation (up to 2 words before)
         is_negated = False
         for j in range(max(0, i-2), i):
@@ -354,21 +405,21 @@ def detect_sentiment(feedback: str) -> str:
                 is_negated = True
                 break
                 
-        if w in pain_keywords:
+        if stemmed in pain_keywords or w in pain_keywords:
             if is_negated:
-                energy_score += 1  # e.g., "no pain"
+                energy_score += 1
             else:
-                pain_score += 1    # e.g., "legs sore"
-        elif w in fatigue_keywords:
+                pain_score += 1
+        elif stemmed in fatigue_keywords or w in fatigue_keywords:
             if is_negated:
-                energy_score += 1  # e.g., "not tired"
+                energy_score += 1
             else:
-                fatigue_score += 1  # e.g., "very tired"
-        elif w in high_energy_keywords:
+                fatigue_score += 1
+        elif stemmed in high_energy_keywords or w in high_energy_keywords:
             if is_negated:
-                fatigue_score += 1  # e.g., "not great", "can't move", "cannot run"
+                fatigue_score += 1
             else:
-                energy_score += 1   # e.g., "feel great", "ready to run"
+                energy_score += 1
                 
     if pain_score > 0:
         return "pain"

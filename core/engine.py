@@ -52,16 +52,16 @@ def parse_workout_details(workout_name: str) -> tuple[int, int]:
 
     # 2. Parse Zone using standard running terminologies
     name_lower = workout_name.lower()
-    if "zone 1" in name_lower or "recovery" in name_lower:
-        zone = 1
-    elif "zone 2" in name_lower or "easy" in name_lower:
-        zone = 2
-    elif "zone 3" in name_lower or "tempo" in name_lower:
-        zone = 3
+    if "zone 5" in name_lower or "threshold" in name_lower or "interval" in name_lower:
+        zone = 5
     elif "zone 4" in name_lower or "uptempo" in name_lower:
         zone = 4
-    elif "zone 5" in name_lower or "threshold" in name_lower or "interval" in name_lower:
-        zone = 5
+    elif "zone 3" in name_lower or "tempo" in name_lower:
+        zone = 3
+    elif "zone 2" in name_lower or "easy" in name_lower:
+        zone = 2
+    elif "zone 1" in name_lower or "recovery" in name_lower:
+        zone = 1
     else:
         zone = default_zone
 
@@ -305,6 +305,319 @@ Decision Directives:
     except Exception as e:
         logger.error(f"Gemini API invocation failed: {e}. Falling back to offline engine.")
         return generate_fallback_draft(original_workout, original_zone, original_duration, state, heuristics)
+
+
+# ==========================================
+
+def detect_sentiment(feedback: str) -> str:
+    """
+    Parses subjective athlete feedback, classifying it into pain, fatigue, 
+    high-energy, or neutral sentiment. Uses negation-aware keyword context 
+    matching and a relative scoring algorithm to prevent false-positives 
+    (e.g., 'not tired' or 'no pain' triggering fatigue/pain).
+    """
+    feedback_lower = feedback.lower()
+    
+    # 1. Pain / injury indicators
+    pain_keywords = {"sore", "pain", "hurt", "tight", "stiff", "cramp", "ach", "injury", "ache", "aches", "hurts", "soreness", "twinge", "pull"}
+    
+    # 2. Fatigue / exhaustion / severe under-recovery indicators
+    fatigue_keywords = {
+        "tired", "exhausted", "fatigue", "sleepy", "weak", "heavy", 
+        "dead", "wrecked", "lazy", "beat", "flat", "stuck", "drained", 
+        "sluggish", "bad", "terrible", "horrible", "awful", "poor", "exhaustion"
+    }
+    
+    # 3. High energy / readiness indicators
+    high_energy_keywords = {
+        "ready", "dominate", "go", "good", "great", "strong", "perfect", 
+        "fresh", "fast", "pace", "hard", "more", "fit", "healthy", 
+        "fine", "well", "yes", "excited", "fly", "destroy", "amazing", "awesome"
+    }
+    
+    # 4. Negation tokens that invert positive/negative statements
+    negations = {"not", "no", "never", "dont", "don't", "cant", "can't", "neither", "nothing", "without", "won't", "wont"}
+
+    # Extract words using regex
+    words = re.findall(r"\b[a-z']+\b", feedback_lower)
+    
+    pain_score = 0
+    fatigue_score = 0
+    energy_score = 0
+    
+    for i, w in enumerate(words):
+        # Check if this word is preceded by a negation (up to 2 words before)
+        is_negated = False
+        for j in range(max(0, i-2), i):
+            if words[j] in negations:
+                is_negated = True
+                break
+                
+        if w in pain_keywords:
+            if is_negated:
+                energy_score += 1  # e.g., "no pain"
+            else:
+                pain_score += 1    # e.g., "legs sore"
+        elif w in fatigue_keywords:
+            if is_negated:
+                energy_score += 1  # e.g., "not tired"
+            else:
+                fatigue_score += 1  # e.g., "very tired"
+        elif w in high_energy_keywords:
+            if is_negated:
+                fatigue_score += 1  # e.g., "not great"
+            else:
+                energy_score += 1   # e.g., "feel great"
+                
+    if pain_score > 0:
+        return "pain"
+    elif fatigue_score > energy_score:
+        return "fatigue"
+    elif energy_score > fatigue_score:
+        return "high_energy"
+    else:
+        return "neutral"
+
+
+def generate_fallback_with_feedback(
+    original_workout: str,
+    original_zone: int,
+    original_duration: int,
+    state: EnvironmentState,
+    heuristics: dict,
+    user_feedback: str,
+    draft_1: WorkoutDraft
+) -> WorkoutDraft:
+    """Offline rule-based fallback when Gemini API key is missing during regeneration."""
+    sentiment = detect_sentiment(user_feedback)
+    
+    heur_zone = heuristics["recommended_zone"]
+    heur_duration = heuristics["recommended_duration"]
+    
+    temp = state.weather.temperature_c
+    sleep = state.biometric.sleep_score
+    hrv = state.biometric.hrv_status
+
+    if sentiment == "high_energy":
+        # Scale up to Heuristic bounds (biometric/weather safety bounds)
+        target_zone = heur_zone
+        duration_minutes = heur_duration
+        
+        # If Heuristics actually match original planned workout, athlete can proceed in full
+        if duration_minutes == original_duration and target_zone == original_zone:
+            adjusted_workout = original_workout
+            rationale = (
+                f"OFFLINE READJUSTMENT: Athlete reported feeling strong and ready: '{user_feedback}'. "
+                f"Biometrics and climate are optimal, allowing the athlete to perform the full "
+                f"scheduled workout protocol."
+            )
+        elif heuristics["compounding_warning"]:
+            adjusted_workout = "30-minute Active Recovery Walk"
+            rationale = (
+                f"OFFLINE READJUSTMENT: Athlete reported feeling strong and ready: '{user_feedback}'. "
+                f"However, compounding safety lockout is active due to poor recovery (Sleep: {sleep}/100, HRV: {hrv}) "
+                f"and ambient heat stress ({temp}°C). To prevent cardiovascular and autonomic overload, training is "
+                f"capped at a Zone {target_zone} active recovery walk for {duration_minutes} minutes."
+            )
+        elif heuristics["bio_warning"]:
+            adjusted_workout = f"Biometrically-Capped {original_workout}"
+            rationale = (
+                f"OFFLINE READJUSTMENT: Athlete reported feeling strong and ready: '{user_feedback}'. "
+                f"However, physiological indicators (Sleep: {sleep}/100, HRV: {hrv}) cap intensity at Zone {target_zone} "
+                f"and duration at {duration_minutes} minutes to prevent autonomic overreaching."
+            )
+        else:
+            adjusted_workout = f"Heat-adjusted {original_workout}"
+            rationale = (
+                f"OFFLINE READJUSTMENT: Athlete reported feeling strong and ready: '{user_feedback}'. "
+                f"However, ambient heat stress ({temp}°C) requires keeping the 20% duration cap to "
+                f"{duration_minutes} minutes, though heart rate is permitted up to Zone {target_zone}."
+            )
+    elif sentiment == "pain":
+        duration_minutes = min(30, draft_1.duration_minutes)
+        adjusted_workout = f"{duration_minutes}-minute Full-Body Stretching and Mobility Session"
+        target_zone = 1
+        rationale = (
+            f"OFFLINE READJUSTMENT: Athlete reported muscular soreness/pain: '{user_feedback}'. "
+            f"To facilitate recovery and prevent injury, the training is changed from running to a "
+            f"mobility/stretching session, capped at Zone {target_zone}."
+        )
+    elif sentiment == "fatigue":
+        duration_minutes = min(20, draft_1.duration_minutes)
+        adjusted_workout = f"{duration_minutes}-minute Easy Active Recovery Walk"
+        target_zone = 1
+        rationale = (
+            f"OFFLINE READJUSTMENT: Athlete reported subjective fatigue/under-recovery: '{user_feedback}'. "
+            f"Autonomic and central nervous system strain require down-regulation to a very light "
+            f"active recovery walk, capped at Zone {target_zone}."
+        )
+    else:
+        # Generic adjustment scaling down from Draft 1
+        target_zone = max(1, draft_1.target_zone - 1)
+        duration_minutes = int(draft_1.duration_minutes * 0.8)
+        adjusted_workout = f"Reduced Intensity {draft_1.adjusted_workout}"
+        rationale = (
+            f"OFFLINE READJUSTMENT: Athlete requested modification: '{user_feedback}'. "
+            f"Workout adjusted downwards. Heart rate capped at Zone {target_zone} and duration reduced "
+            f"to {duration_minutes} minutes to align with subjective recovery state."
+        )
+
+    return WorkoutDraft(
+        original_workout=original_workout,
+        adjusted_workout=adjusted_workout,
+        target_zone=target_zone,
+        duration_minutes=duration_minutes,
+        rationale=rationale
+    )
+
+
+def regenerate_with_feedback(
+    state_path: str,
+    original_workout: str,
+    user_feedback: str,
+    draft_1: WorkoutDraft
+) -> WorkoutDraft:
+    """
+    Re-runs the reasoning engine incorporating user subjective feedback (e.g. 'Legs are sore').
+    Maintains biometric safety boundaries (heuristics) but adapts training style.
+    Allows scaling up up to the heuristic safety bounds when user feedback indicates high energy.
+    """
+    state = None
+    if os.path.exists(state_path):
+        try:
+            with open(state_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            state = EnvironmentState.model_validate(raw)
+        except Exception as e:
+            logger.error(f"Failed to read state.json during feedback regeneration: {e}")
+            
+    if state is None:
+        from core.ingestion import BiometricData, WeatherData
+        state = EnvironmentState(
+            biometric=BiometricData(sleep_score=70, hrv_status="BALANCED", acute_training_load=400.0),
+            weather=WeatherData(temperature_c=20.0, humidity=60, summary="Clear"),
+            iso_timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat()
+        )
+        
+    original_zone, original_duration = parse_workout_details(original_workout)
+    heuristics = evaluate_heuristics(state, original_workout, original_zone, original_duration)
+
+    # Detect high-energy signals in feedback
+    sentiment = detect_sentiment(user_feedback)
+    is_high_energy = (sentiment == "high_energy")
+
+    # Determine maximum boundaries for this regeneration
+    if is_high_energy:
+        max_allowed_zone = heuristics["recommended_zone"]
+        max_allowed_duration = heuristics["recommended_duration"]
+    else:
+        max_allowed_zone = draft_1.target_zone
+        max_allowed_duration = draft_1.duration_minutes
+
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        logger.warning("No Gemini API key found for feedback regeneration. Falling back to local offline heuristic engine.")
+        fallback = generate_fallback_with_feedback(original_workout, original_zone, original_duration, state, heuristics, user_feedback, draft_1)
+        fallback.target_zone = min(max_allowed_zone, fallback.target_zone)
+        fallback.duration_minutes = min(max_allowed_duration, fallback.duration_minutes)
+        return fallback
+
+    try:
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+        headers = {"Content-Type": "application/json"}
+        params = {"key": api_key}
+
+        prompt_text = f"""
+You are the reasoning engine of PacePilot, an agentic AI running coach.
+The athlete rejected your initial training recommendation and provided subjective feedback.
+Generate a new, revised workout draft that addresses their feedback while strictly maintaining safety boundaries.
+
+Original Planned Workout:
+- Name: {original_workout}
+- Planned Zone: Zone {original_zone}
+- Planned Duration: {original_duration} minutes
+
+Athlete Ingested Parameters:
+- Sleep Score: {state.biometric.sleep_score}/100
+- HRV Status: {state.biometric.hrv_status}
+- Acute Training Load: {state.biometric.acute_training_load}
+- Local Temperature: {state.weather.temperature_c}°C
+- Local Humidity: {state.weather.humidity}%
+
+Your Initial Proposal (Draft 1):
+- Workout Name: {draft_1.adjusted_workout}
+- Target Zone: Zone {draft_1.target_zone}
+- Target Duration: {draft_1.duration_minutes} minutes
+- Initial Rationale: {draft_1.rationale}
+
+Athlete's Subjective Feedback:
+- User feels: "{user_feedback}"
+
+Heuristic Safety Bounds (DO NOT EXCEED):
+- Maximum Safety Heart Rate Zone Cap: Zone {max_allowed_zone}
+- Maximum Recommended Duration: {max_allowed_duration} minutes
+
+Safety Guidelines:
+1. You MUST NOT exceed the Maximum Safety Heart Rate Zone Cap or the Maximum Recommended Duration.
+2. Adapt the workout to address the user feedback. 
+   - If user reports high-energy/readiness ("{user_feedback}"), you may scale the workout UP to the maximum allowed by the safety bounds.
+   - If user reports soreness/fatigue, scale the workout DOWN from Draft 1 and change structure accordingly (e.g. walk/stretching).
+3. Explain the adjustments in the 'rationale' field using athletic training concepts, acknowledging both the biometrics and their subjective feedback.
+"""
+
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": prompt_text
+                        }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "original_workout": {"type": "STRING"},
+                        "adjusted_workout": {"type": "STRING"},
+                        "target_zone": {"type": "INTEGER"},
+                        "duration_minutes": {"type": "INTEGER"},
+                        "rationale": {"type": "STRING"}
+                    },
+                    "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale"]
+                }
+            }
+        }
+
+        logger.info("Requesting feedback-adjusted completion from Gemini API...")
+        response = requests.post(url, json=payload, headers=headers, params=params, timeout=25)
+        response.raise_for_status()
+
+        resp_json = response.json()
+        candidates = resp_json.get("candidates", [])
+        if candidates:
+            content = candidates[0].get("content", {})
+            parts = content.get("parts", [])
+            if parts:
+                raw_text = parts[0].get("text", "")
+                logger.info("Successfully fetched feedback-adjusted Gemini response.")
+                draft_dict = json.loads(raw_text)
+                draft = WorkoutDraft(**draft_dict)
+                # Enforce strict safety boundary check
+                draft.target_zone = min(max_allowed_zone, draft.target_zone)
+                draft.duration_minutes = min(max_allowed_duration, draft.duration_minutes)
+                return draft
+
+        raise ValueError("Invalid candidates block returned by Gemini API")
+
+    except Exception as e:
+        logger.error(f"Feedback-adjusted Gemini API call failed: {e}. Falling back to offline fallback.")
+        fallback = generate_fallback_with_feedback(original_workout, original_zone, original_duration, state, heuristics, user_feedback, draft_1)
+        fallback.target_zone = min(max_allowed_zone, fallback.target_zone)
+        fallback.duration_minutes = min(max_allowed_duration, fallback.duration_minutes)
+        return fallback
 
 
 # ==========================================

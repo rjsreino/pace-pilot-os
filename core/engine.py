@@ -328,15 +328,16 @@ def detect_sentiment(feedback: str) -> str:
         "sluggish", "bad", "terrible", "horrible", "awful", "poor", "exhaustion"
     }
     
-    # 3. High energy / readiness indicators
+    # 3. High energy / readiness indicators (including positive exercise/movement verbs)
     high_energy_keywords = {
         "ready", "dominate", "go", "good", "great", "strong", "perfect", 
         "fresh", "fast", "pace", "hard", "more", "fit", "healthy", 
-        "fine", "well", "yes", "excited", "fly", "destroy", "amazing", "awesome"
+        "fine", "well", "yes", "excited", "fly", "destroy", "amazing", "awesome",
+        "run", "walk", "move", "train", "workout", "exercise", "jog", "lift"
     }
     
     # 4. Negation tokens that invert positive/negative statements
-    negations = {"not", "no", "never", "dont", "don't", "cant", "can't", "neither", "nothing", "without", "won't", "wont"}
+    negations = {"not", "no", "never", "dont", "don't", "cant", "can't", "neither", "nothing", "without", "won't", "wont", "cannot"}
 
     # Extract words using regex
     words = re.findall(r"\b[a-z']+\b", feedback_lower)
@@ -365,9 +366,9 @@ def detect_sentiment(feedback: str) -> str:
                 fatigue_score += 1  # e.g., "very tired"
         elif w in high_energy_keywords:
             if is_negated:
-                fatigue_score += 1  # e.g., "not great"
+                fatigue_score += 1  # e.g., "not great", "can't move", "cannot run"
             else:
-                energy_score += 1   # e.g., "feel great"
+                energy_score += 1   # e.g., "feel great", "ready to run"
                 
     if pain_score > 0:
         return "pain"
@@ -377,6 +378,33 @@ def detect_sentiment(feedback: str) -> str:
         return "high_energy"
     else:
         return "neutral"
+
+
+def rebuild_workout_name(workout_name: str, new_duration: int, prefix: str = "") -> str:
+    """
+    Cleans any existing duration prefix (e.g. '36-minute', '36 min') and prepends
+    the new target duration and optional intensity modifier to prevent conflicts.
+    """
+    name_clean = workout_name.strip()
+    
+    # 1. Strip common modifier prefixes first to expose duration
+    modifiers = ["Reduced Intensity", "Heat-adjusted", "Biometrically-Capped"]
+    for mod in modifiers:
+        name_clean = re.sub(r"^" + re.escape(mod) + r"\s*", "", name_clean, flags=re.IGNORECASE).strip()
+        
+    # 2. Strip duration prefix (e.g., "36-minute", "30 minute")
+    duration_pattern = r"^\d+\s*(?:-?\s*minute|-?\s*min|-?\s*mins)\s*"
+    name_clean = re.sub(duration_pattern, "", name_clean, flags=re.IGNORECASE).strip()
+    
+    # 3. Strip modifiers again in case they were after duration (e.g., "36-minute Reduced Intensity...")
+    for mod in modifiers:
+        name_clean = re.sub(r"^" + re.escape(mod) + r"\s*", "", name_clean, flags=re.IGNORECASE).strip()
+        
+    # 4. Construct new name
+    if prefix:
+        return f"{new_duration}-minute {prefix.strip()} {name_clean}"
+    else:
+        return f"{new_duration}-minute {name_clean}"
 
 
 def generate_fallback_with_feedback(
@@ -420,14 +448,14 @@ def generate_fallback_with_feedback(
                 f"capped at a Zone {target_zone} active recovery walk for {duration_minutes} minutes."
             )
         elif heuristics["bio_warning"]:
-            adjusted_workout = f"Biometrically-Capped {original_workout}"
+            adjusted_workout = rebuild_workout_name(original_workout, duration_minutes, "Biometrically-Capped")
             rationale = (
                 f"OFFLINE READJUSTMENT: Athlete reported feeling strong and ready: '{user_feedback}'. "
                 f"However, physiological indicators (Sleep: {sleep}/100, HRV: {hrv}) cap intensity at Zone {target_zone} "
                 f"and duration at {duration_minutes} minutes to prevent autonomic overreaching."
             )
         else:
-            adjusted_workout = f"Heat-adjusted {original_workout}"
+            adjusted_workout = rebuild_workout_name(original_workout, duration_minutes, "Heat-adjusted")
             rationale = (
                 f"OFFLINE READJUSTMENT: Athlete reported feeling strong and ready: '{user_feedback}'. "
                 f"However, ambient heat stress ({temp}°C) requires keeping the 20% duration cap to "
@@ -455,7 +483,7 @@ def generate_fallback_with_feedback(
         # Generic adjustment scaling down from Draft 1
         target_zone = max(1, draft_1.target_zone - 1)
         duration_minutes = int(draft_1.duration_minutes * 0.8)
-        adjusted_workout = f"Reduced Intensity {draft_1.adjusted_workout}"
+        adjusted_workout = rebuild_workout_name(draft_1.adjusted_workout, duration_minutes, "Reduced Intensity")
         rationale = (
             f"OFFLINE READJUSTMENT: Athlete requested modification: '{user_feedback}'. "
             f"Workout adjusted downwards. Heart rate capped at Zone {target_zone} and duration reduced "

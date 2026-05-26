@@ -1,13 +1,13 @@
 {
   "biometric": {
-    "sleep_score": 75,
+    "sleep_score": 90,
     "hrv_status": "BALANCED",
-    "acute_training_load": 480.0
+    "acute_training_load": 598.0
   },
   "weather": {
-    "temperature_c": 20.8,
-    "humidity": 60,
-    "summary": "Partly cloudy"
+    "temperature_c": 31.0,
+    "humidity": 58,
+    "summary": "clear"
   },
-  "iso_timestamp": "2026-05-25T14:50:29.269707+00:00"
+  "iso_timestamp": "2026-05-26T05:18:47.512594+00:00"
 }

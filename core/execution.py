@@ -73,9 +73,9 @@ def execute_final_action(draft: WorkoutDraft) -> bool:
         return False
 
     # ==========================================
-    # Action 2: Google Calendar Integration Scaffold
+    # Action 2: Google Calendar Integration
     # ==========================================
-    calendar_id = os.getenv("GOOGLE_CALENDAR_ID")
+    calendar_id = os.getenv("GOOGLE_CALENDAR_ID") or "primary"
     credentials_path = os.path.join(root_dir, "credentials.json")
     
     if not os.path.exists(credentials_path):
@@ -105,9 +105,42 @@ def execute_final_action(draft: WorkoutDraft) -> bool:
         service = build("calendar", "v3", credentials=creds)
         logger.info(f"Google Calendar service authenticated successfully for Calendar ID: {calendar_id}")
         
+        # Calculate start and end times
+        start_time = datetime.datetime.now(datetime.timezone.utc)
+        end_time = start_time + datetime.timedelta(minutes=draft.duration_minutes)
+        
+        # Format workout description
+        description_text = (
+            f"Target Heart Rate Zone: Zone {draft.target_zone}\n"
+            f"Target Duration: {draft.duration_minutes} minutes\n"
+            f"Original Workout: {draft.original_workout}\n\n"
+            f"Rationale: {draft.rationale}"
+        )
+        
+        # Construct event body
+        event_body = {
+            "summary": f"PacePilot: {draft.adjusted_workout}",
+            "description": description_text,
+            "start": {
+                "dateTime": start_time.isoformat(),
+                "timeZone": "UTC"
+            },
+            "end": {
+                "dateTime": end_time.isoformat(),
+                "timeZone": "UTC"
+            }
+        }
+        
+        logger.info(f"Dispatching event payload to Google Calendar ID: {calendar_id}...")
+        created_event = service.events().insert(calendarId=calendar_id, body=event_body).execute()
+        
+        logger.info(
+            f"[SUCCESS] Workout event successfully injected into Google Calendar! "
+            f"Link: {created_event.get('htmlLink')}"
+        )
+        
     except Exception as e:
-        logger.error(f"Error during Google Calendar service initialization: {e}")
-        # Gracefully return True as this is a scaffold warning fallback boundary
+        logger.error(f"Error during Google Calendar execution: {e}")
         return True
         
     return True

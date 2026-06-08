@@ -25,9 +25,8 @@ def generate_fallback_draft(
     if heuristics["compounding_warning"]:
         adjusted_workout = "30-minute Active Recovery Walk"
         rationale = (
-            f"SAFETY LOCKOUT TRIGGERED. Autonomic balance is critical (HRV: {hrv}, Sleep Score: {sleep}/100) "
-            f"coupled with high environmental heat strain ({temp}°C > 28°C). Executing high-intensity or extended "
-            f"cardiovascular training today presents acute dehydration and physiological overreaching risks. "
+            f"Compounding safety lockout active due to critical recovery (HRV: {hrv}, Sleep: {sleep}/100) "
+            f"and high heat ({temp}°C). High-intensity training today presents acute dehydration and overreaching risks. "
             f"Adjusted to a low-intensity active recovery walk."
         )
         return WorkoutDraft(
@@ -43,10 +42,9 @@ def generate_fallback_draft(
         adjusted_duration = heuristics["recommended_duration"]
         adjusted_workout = f"Recovery Run (Cap Zone {adjusted_zone})"
         rationale = (
-            f"BIOMETRIC INTENSITY DOWNGRADE. Under-recovery markers detected: Sleep score ({sleep}/100) "
-            f"or HRV status is ({hrv}). Performing high heart-rate work under parasympathetic depression "
-            f"delays adaptation and risks injury. Target zone restricted to Zone {adjusted_zone} "
-            f"and training duration reduced by 40% to {adjusted_duration} minutes."
+            f"Biometric downgrade triggered by under-recovery markers (Sleep: {sleep}/100, HRV: {hrv}). "
+            f"High heart-rate training under parasympathetic depression delays adaptation and risks injury. "
+            f"Target zone is restricted to Zone {adjusted_zone} and duration reduced to {adjusted_duration} minutes."
         )
         return WorkoutDraft(
             original_workout=original_workout,
@@ -60,10 +58,9 @@ def generate_fallback_draft(
         adjusted_duration = heuristics["recommended_duration"]
         adjusted_workout = f"Heat-adjusted {original_workout}"
         rationale = (
-            f"THERMAL STRESS DURATION CAP. Local temperature is ({temp}°C), which exceeds the 28°C threshold. "
-            f"Extended efforts in elevated temperatures elevate blood viscosity and trigger cardiac drift "
-            f"(upward drift in heart rate relative to power/pace). Workout duration scaled back by 20% "
-            f"to {adjusted_duration} minutes to manage cardiovascular drift."
+            f"Thermal stress duration cap triggered by local temperature ({temp}°C). "
+            f"Extended efforts in elevated temperatures elevate blood viscosity and trigger cardiac drift. "
+            f"Duration is scaled back by 20% to {adjusted_duration} minutes to manage heat strain."
         )
         return WorkoutDraft(
             original_workout=original_workout,
@@ -75,9 +72,8 @@ def generate_fallback_draft(
         
     else:
         rationale = (
-            f"FIT FOR TRAINING. Physiological parameters (Sleep: {sleep}/100, HRV: {hrv}) are in optimal ranges, "
-            f"and environmental factors ({temp}°C, {state.weather.humidity}% humidity) present no heat stress constraints. "
-            f"Proceeding with the original training protocol."
+            f"Physiological parameters (Sleep: {sleep}/100, HRV: {hrv}) and climate conditions ({temp}°C) are optimal. "
+            f"No safety warning is active. Proceeding with the original training protocol."
         )
         return WorkoutDraft(
             original_workout=original_workout,
@@ -116,49 +112,42 @@ def generate_fallback_with_feedback(
         if duration_minutes == original_duration and target_zone == original_zone:
             adjusted_workout = original_workout
             rationale = (
-                f"OFFLINE READJUSTMENT: Athlete reported feeling strong and ready: '{user_feedback}'. "
-                f"Biometrics and climate are optimal, allowing the athlete to perform the full "
-                f"scheduled workout protocol."
+                f"Athlete reported feeling strong and ready: '{user_feedback}'. "
+                f"Biometrics and climate are optimal, allowing completion of the full planned training protocol."
             )
         elif heuristics["compounding_warning"]:
             adjusted_workout = "30-minute Active Recovery Walk"
             rationale = (
-                f"OFFLINE READJUSTMENT: Athlete reported feeling strong and ready: '{user_feedback}'. "
-                f"However, compounding safety lockout is active due to poor recovery (Sleep: {sleep}/100, HRV: {hrv}) "
-                f"and ambient heat stress ({temp}°C). To prevent cardiovascular and autonomic overload, training is "
-                f"capped at a Zone {target_zone} active recovery walk for {duration_minutes} minutes."
+                f"Athlete reported feeling strong but compounding safety lockout is active (Sleep: {sleep}/100, HRV: {hrv}, Temp: {temp}°C). "
+                f"To prevent cardiovascular and autonomic overload, training is restricted to a Zone {target_zone} recovery walk for {duration_minutes} minutes."
             )
         elif heuristics["bio_warning"]:
             adjusted_workout = rebuild_workout_name(original_workout, duration_minutes, "Biometrically-Capped")
             rationale = (
-                f"OFFLINE READJUSTMENT: Athlete reported feeling strong and ready: '{user_feedback}'. "
-                f"However, physiological indicators (Sleep: {sleep}/100, HRV: {hrv}) cap intensity at Zone {target_zone} "
-                f"and duration at {duration_minutes} minutes to prevent autonomic overreaching."
+                f"Athlete reported feeling strong but under-recovery markers (Sleep: {sleep}/100, HRV: {hrv}) cap training. "
+                f"Target intensity is limited to Zone {target_zone} and duration to {duration_minutes} minutes to prevent autonomic overreaching."
             )
         else:
             adjusted_workout = rebuild_workout_name(original_workout, duration_minutes, "Heat-adjusted")
             rationale = (
-                f"OFFLINE READJUSTMENT: Athlete reported feeling strong and ready: '{user_feedback}'. "
-                f"However, ambient heat stress ({temp}°C) requires keeping the 20% duration cap to "
-                f"{duration_minutes} minutes, though heart rate is permitted up to Zone {target_zone}."
+                f"Athlete reported feeling strong but ambient heat ({temp}°C) requires keeping a duration cap of {duration_minutes} minutes. "
+                f"Target intensity is permitted up to Zone {target_zone}."
             )
     elif sentiment == "pain":
         duration_minutes = min(30, draft_1.duration_minutes)
         adjusted_workout = f"{duration_minutes}-minute Full-Body Stretching and Mobility Session"
         target_zone = 1
         rationale = (
-            f"OFFLINE READJUSTMENT: Athlete reported muscular soreness/pain: '{user_feedback}'. "
-            f"To facilitate recovery and prevent injury, the training is changed from running to a "
-            f"mobility/stretching session, capped at Zone {target_zone}."
+            f"Athlete reported soreness/pain: '{user_feedback}'. "
+            f"To facilitate recovery and prevent injury, the session is changed to a mobility/stretching session capped at Zone {target_zone}."
         )
     elif sentiment == "fatigue":
         duration_minutes = min(20, draft_1.duration_minutes)
         adjusted_workout = f"{duration_minutes}-minute Easy Active Recovery Walk"
         target_zone = 1
         rationale = (
-            f"OFFLINE READJUSTMENT: Athlete reported subjective fatigue/under-recovery: '{user_feedback}'. "
-            f"Autonomic and central nervous system strain require down-regulation to a very light "
-            f"active recovery walk, capped at Zone {target_zone}."
+            f"Athlete reported subjective fatigue: '{user_feedback}'. "
+            f"Autonomic and central nervous system strain require down-regulation to a Zone {target_zone} active recovery walk."
         )
     else:
         # Generic adjustment scaling down from Draft 1
@@ -166,9 +155,8 @@ def generate_fallback_with_feedback(
         duration_minutes = int(draft_1.duration_minutes * 0.8)
         adjusted_workout = rebuild_workout_name(draft_1.adjusted_workout, duration_minutes, "Reduced Intensity")
         rationale = (
-            f"OFFLINE READJUSTMENT: Athlete requested modification: '{user_feedback}'. "
-            f"Workout adjusted downwards. Heart rate capped at Zone {target_zone} and duration reduced "
-            f"to {duration_minutes} minutes to align with subjective recovery state."
+            f"Athlete requested modification: '{user_feedback}'. "
+            f"Heart rate is capped at Zone {target_zone} and duration reduced to {duration_minutes} minutes to align with subjective recovery state."
         )
 
     return WorkoutDraft(

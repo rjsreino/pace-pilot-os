@@ -47,6 +47,67 @@ def print_workout_card(title: str, draft: WorkoutDraft):
 # Core Function: The Gatekeeper State Machine
 # ==========================================
 
+def resolve_target_schedule_time() -> datetime.datetime:
+    """
+    Resolves the target scheduled start time for the workout based on the current local clock.
+    If the current hour is >= 20 (8:00 PM), baseline options shift to tomorrow.
+    """
+    now = datetime.datetime.now().astimezone()
+    
+    if now.hour >= 20:
+        print("\n[TEMPORAL CAP] It is past optimal training hours. Shifting baseline options to tomorrow.")
+        
+    print("\n" + "-" * 50)
+    print("             SELECT WORKOUT WINDOW")
+    print("-" * 50)
+    print("  [1] Morning Window (Tomorrow at 7:00 AM) - Ideal for minimizing summer heat load")
+    print("  [2] Evening Window (Tomorrow at 6:00 PM) - Ideal for post-class cooling windows")
+    print("  [3] Custom Time Slot (Prompt user to input a simple date/hour offset)")
+    print("-" * 50)
+    
+    while True:
+        try:
+            choice = input("Select option [1-3]: ").strip()
+            if choice == "1":
+                tomorrow = now + datetime.timedelta(days=1)
+                return tomorrow.replace(hour=7, minute=0, second=0, microsecond=0)
+            elif choice == "2":
+                tomorrow = now + datetime.timedelta(days=1)
+                return tomorrow.replace(hour=18, minute=0, second=0, microsecond=0)
+            elif choice == "3":
+                print("\nCustom Time Slot Picker:")
+                while True:
+                    try:
+                        days_input = input("Enter days offset from today (0 for today, 1 for tomorrow, etc.) [Default: 1]: ").strip()
+                        days = int(days_input) if days_input else 1
+                        if days < 0:
+                            print("[-] Days offset must be non-negative.")
+                            continue
+                        break
+                    except ValueError:
+                        print("[-] Please enter a valid integer.")
+                
+                while True:
+                    try:
+                        hour_input = input("Enter hour of the day (0-23) [Default: 9]: ").strip()
+                        hour = int(hour_input) if hour_input else 9
+                        if not (0 <= hour <= 23):
+                            print("[-] Hour must be between 0 and 23.")
+                            continue
+                        break
+                    except ValueError:
+                        print("[-] Please enter a valid integer.")
+                        
+                target = now + datetime.timedelta(days=days)
+                return target.replace(hour=hour, minute=0, second=0, microsecond=0)
+            else:
+                print("[-] Invalid choice. Please select 1, 2, or 3.")
+        except (KeyboardInterrupt, EOFError):
+            print("\n[-] Time selection interrupted. Defaulting to tomorrow morning at 7:00 AM.")
+            tomorrow = now + datetime.timedelta(days=1)
+            return tomorrow.replace(hour=7, minute=0, second=0, microsecond=0)
+
+
 def prompt_user_validation(state_path: str, initial_draft: WorkoutDraft) -> WorkoutDraft | None:
     """
     Validation Gatekeeper State Machine.
@@ -64,6 +125,7 @@ def prompt_user_validation(state_path: str, initial_draft: WorkoutDraft) -> Work
             auth_choice = input("Do you authorize scheduling this adjustment? [Y/N]: ").strip().upper()
             if auth_choice in ["Y", "YES"]:
                 logger.info("Initial Draft 1 authorized directly by user.")
+                initial_draft.scheduled_start_iso = resolve_target_schedule_time().isoformat()
                 return initial_draft
             elif auth_choice in ["N", "NO"]:
                 logger.info("Draft 1 rejected. Opening sub-menu options...")
@@ -97,6 +159,7 @@ def prompt_user_validation(state_path: str, initial_draft: WorkoutDraft) -> Work
                     rationale="User bypassed agent safety warnings and forced the original unadjusted training protocol."
                 )
                 logger.warning("User forced original unadjusted training protocol.")
+                forced_draft.scheduled_start_iso = resolve_target_schedule_time().isoformat()
                 return forced_draft
                 
             elif sub_choice == "2":
@@ -108,6 +171,7 @@ def prompt_user_validation(state_path: str, initial_draft: WorkoutDraft) -> Work
                     rationale="User requested an absolute rest day, overriding all planned exercise."
                 )
                 logger.info("Absolute rest day forced by user.")
+                rest_draft.scheduled_start_iso = resolve_target_schedule_time().isoformat()
                 return rest_draft
                 
             elif sub_choice == "3":
@@ -147,9 +211,11 @@ def prompt_user_validation(state_path: str, initial_draft: WorkoutDraft) -> Work
             final_choice = input("Select final action [1-4]: ").strip()
             if final_choice == "1":
                 logger.info("User approved Draft 2 (feedback-adjusted).")
+                draft_2.scheduled_start_iso = resolve_target_schedule_time().isoformat()
                 return draft_2
             elif final_choice == "2":
                 logger.info("User reverted to Draft 1 (original recommendation).")
+                initial_draft.scheduled_start_iso = resolve_target_schedule_time().isoformat()
                 return initial_draft
             elif final_choice == "3":
                 rest_draft = WorkoutDraft(
@@ -160,6 +226,7 @@ def prompt_user_validation(state_path: str, initial_draft: WorkoutDraft) -> Work
                     rationale="User selected Safety Override to force an absolute rest day."
                 )
                 logger.info("User forced safety override rest day.")
+                rest_draft.scheduled_start_iso = resolve_target_schedule_time().isoformat()
                 return rest_draft
             elif final_choice == "4":
                 logger.info("User cancelled validation in final matrix.")

@@ -68,7 +68,7 @@ Decision Directives:
 1. If Compounding Safety Lockout is True, you MUST set the adjusted workout to a Rest Day or Active Walk (Zone 1, 20-30 minutes).
 2. If Biometric Recovery Warning is True, cap the heart rate intensity to Zone 1 or Zone 2, and reduce the duration.
 3. If Temperature Warning is True, scale duration down by 15-20% to prevent excess heat load.
-4. Elaborate on the rationale using standard athletic training terminology (e.g., cardiac drift, EPOC, parasympathetic nervous system, recovery window, autonomic fatigue).
+4. Keep the rationale clear, concise, and capped at a maximum of 2 to 3 sentences. Avoid verbose introductory fluff. Use precise running terminology (e.g., cardiac drift, autonomic fatigue, recovery window) only where directly informative to the adjustment.
 """
 
         payload = {
@@ -214,7 +214,7 @@ Safety Guidelines:
 2. Adapt the workout to address the user feedback. 
    - If user reports high-energy/readiness ("{user_feedback}"), you may scale the workout UP to the maximum allowed by the safety bounds.
    - If user reports soreness/fatigue, scale the workout DOWN from Draft 1 and change structure accordingly (e.g. walk/stretching).
-3. Explain the adjustments in the 'rationale' field using athletic training concepts, acknowledging both the biometrics and their subjective feedback.
+3. Keep the rationale clear, concise, and capped at a maximum of 2 to 3 sentences. Avoid verbose introductory fluff. Use precise running terminology (e.g., cardiac drift, autonomic fatigue, recovery window) only where directly informative to the adjustment.
 """
 
         payload = {

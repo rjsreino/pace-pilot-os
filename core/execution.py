@@ -33,8 +33,14 @@ def execute_final_action(draft: WorkoutDraft) -> bool:
     try:
         now = datetime.datetime.now(datetime.timezone.utc)
         dtstamp = now.strftime("%Y%m%dT%H%M%SZ")
-        dtstart = now.strftime("%Y%m%dT%H%M%SZ")
-        dtend = (now + datetime.timedelta(minutes=draft.duration_minutes)).strftime("%Y%m%dT%H%M%SZ")
+        if draft.scheduled_start_iso:
+            start_time = datetime.datetime.fromisoformat(draft.scheduled_start_iso)
+        else:
+            start_time = now
+        start_utc = start_time.astimezone(datetime.timezone.utc)
+        dtstart = start_utc.strftime("%Y%m%dT%H%M%SZ")
+        end_utc = start_utc + datetime.timedelta(minutes=draft.duration_minutes)
+        dtend = end_utc.strftime("%Y%m%dT%H%M%SZ")
         uid = f"pacepilot-{uuid.uuid4()}"
         
         # Clean rationale newlines for single-line string encoding in ICS description field
@@ -106,8 +112,12 @@ def execute_final_action(draft: WorkoutDraft) -> bool:
         logger.info(f"Google Calendar service authenticated successfully for Calendar ID: {calendar_id}")
         
         # Calculate start and end times
-        start_time = datetime.datetime.now(datetime.timezone.utc)
-        end_time = start_time + datetime.timedelta(minutes=draft.duration_minutes)
+        if draft.scheduled_start_iso:
+            start_time = datetime.datetime.fromisoformat(draft.scheduled_start_iso)
+        else:
+            start_time = datetime.datetime.now(datetime.timezone.utc)
+        start_utc = start_time.astimezone(datetime.timezone.utc)
+        end_utc = start_utc + datetime.timedelta(minutes=draft.duration_minutes)
         
         # Format workout description
         description_text = (
@@ -122,11 +132,11 @@ def execute_final_action(draft: WorkoutDraft) -> bool:
             "summary": f"PacePilot: {draft.adjusted_workout}",
             "description": description_text,
             "start": {
-                "dateTime": start_time.isoformat(),
+                "dateTime": start_utc.isoformat(),
                 "timeZone": "UTC"
             },
             "end": {
-                "dateTime": end_time.isoformat(),
+                "dateTime": end_utc.isoformat(),
                 "timeZone": "UTC"
             }
         }

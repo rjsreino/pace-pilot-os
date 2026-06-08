@@ -3,7 +3,8 @@ import sys
 import logging
 import json
 import datetime
-from core.engine import WorkoutDraft, regenerate_with_feedback, parse_workout_details
+from core.models import WorkoutDraft, UserSettings, WeeklyScheduleDraft
+from core.engine import regenerate_weekly_schedule_with_feedback, parse_workout_details
 
 # Set up logging
 logger = logging.getLogger("PacePilot.Validation")
@@ -41,6 +42,90 @@ def print_workout_card(title: str, draft: WorkoutDraft):
     wrapped = wrap_text(draft.rationale, 55)
     for line in wrapped:
         print(f"      {line}")
+
+
+def print_weekly_schedule_card(title: str, draft: WeeklyScheduleDraft):
+    """Prints a clean ASCII training review card for a weekly training plan."""
+    print(f"\n=============================================================")
+    print(f"  [{title}]")
+    print(f"=============================================================")
+    for day, workout in draft.schedule.items():
+        print(f"\n  * {day}:")
+        print(f"    - Proposal:   {workout.adjusted_workout}")
+        print(f"    - Intensity:  Zone {workout.target_zone}")
+        print(f"    - Duration:   {workout.duration_minutes} minutes")
+        print(f"    - Focus:      {workout.physiological_focus}")
+        print(f"    - Rationale:  ")
+        wrapped = wrap_text(workout.rationale, 55)
+        for line in wrapped:
+            print(f"      {line}")
+    print(f"=============================================================")
+
+
+def resolve_user_settings() -> UserSettings:
+    """
+    Checks environment for DISTANCE_GOAL and WEEKLY_MILEAGE. If missing, prompts the user.
+    Returns a UserSettings Pydantic model.
+    """
+    distance_goal = os.getenv("DISTANCE_GOAL")
+    weekly_mileage = os.getenv("WEEKLY_MILEAGE")
+    
+    # Mapping for distance goal prompt
+    goal_mapping = {
+        "1": "5K",
+        "2": "10K",
+        "3": "HALF",
+        "4": "MARATHON"
+    }
+    
+    if not distance_goal or distance_goal.upper() not in ["5K", "10K", "HALF", "MARATHON"]:
+        print("\n" + "-" * 50)
+        print("             SELECT RUNNING DISTANCE GOAL")
+        print("-" * 50)
+        print("  [1] 5K")
+        print("  [2] 10K")
+        print("  [3] Half Marathon")
+        print("  [4] Marathon")
+        print("-" * 50)
+        while True:
+            choice = input("Select goal [1-4]: ").strip()
+            if choice in goal_mapping:
+                distance_goal = goal_mapping[choice]
+                break
+            elif choice.upper() in ["5K", "10K", "HALF", "MARATHON"]:
+                distance_goal = choice.upper()
+                break
+            else:
+                print("[-] Invalid selection. Please select 1, 2, 3, or 4.")
+                
+    if not weekly_mileage:
+        while True:
+            try:
+                val = input("\nEnter target weekly mileage range (in km): ").strip()
+                weekly_mileage = float(val)
+                if weekly_mileage <= 0:
+                    print("[-] Mileage must be a positive number.")
+                    continue
+                break
+            except ValueError:
+                print("[-] Please enter a valid decimal number.")
+    else:
+        try:
+            weekly_mileage = float(weekly_mileage)
+        except ValueError:
+            print(f"[-] Invalid WEEKLY_MILEAGE environment variable value '{weekly_mileage}'. Defaulting to prompt.")
+            while True:
+                try:
+                    val = input("\nEnter target weekly mileage range (in km): ").strip()
+                    weekly_mileage = float(val)
+                    if weekly_mileage <= 0:
+                        print("[-] Mileage must be a positive number.")
+                        continue
+                    break
+                except ValueError:
+                    print("[-] Please enter a valid decimal number.")
+                    
+    return UserSettings(distance_goal=distance_goal, target_weekly_mileage=weekly_mileage)
 
 
 # ==========================================
@@ -227,6 +312,226 @@ def prompt_user_validation(state_path: str, initial_draft: WorkoutDraft) -> Work
                 )
                 logger.info("User forced safety override rest day.")
                 rest_draft.scheduled_start_iso = resolve_target_schedule_time().isoformat()
+                return rest_draft
+            elif final_choice == "4":
+                logger.info("User cancelled validation in final matrix.")
+                return None
+            else:
+                print("[-] Invalid choice. Please pick between 1 and 4.")
+        except (KeyboardInterrupt, EOFError):
+            print("\n[-] Validation interrupted. Exiting gatekeeper.")
+            return None
+
+
+def prompt_weekly_user_validation(
+    state_path: str,
+    settings: UserSettings,
+    initial_draft: WeeklyScheduleDraft
+) -> WeeklyScheduleDraft | None:
+    """
+    Weekly Validation Gatekeeper State Machine.
+    Allows interactive authorization, subjective feedback loop, and final reversion capabilities for weekly schedule.
+    """
+    # Round 1: Presentation
+    print("\n" + "=" * 65)
+    print("             PACEPILOT WEEKLY SCHEDULE VALIDATION GATEKEEPER")
+    print("=" * 65)
+    print_weekly_schedule_card("DRAFT 1: INITIAL RECOMMENDATION", initial_draft)
+    print("=" * 65)
+
+    while True:
+        try:
+            auth_choice = input("Do you authorize scheduling this adjustment? [Y/N]: ").strip().upper()
+            if auth_choice in ["Y", "YES"]:
+                logger.info("Initial weekly draft authorized directly by user.")
+                base_time = resolve_target_schedule_time()
+                for day_key, workout in initial_draft.schedule.items():
+                    if "Day 1" in day_key:
+                        offset = 1
+                    elif "Day 3" in day_key:
+                        offset = 3
+                    elif "Day 6" in day_key:
+                        offset = 6
+                    else:
+                        offset = 0
+                    workout.scheduled_start_iso = (base_time + datetime.timedelta(days=offset)).isoformat()
+                return initial_draft
+            elif auth_choice in ["N", "NO"]:
+                logger.info("Weekly draft rejected. Opening sub-menu options...")
+                break
+            else:
+                print("[-] Invalid choice. Please enter Y or N.")
+        except (KeyboardInterrupt, EOFError):
+            print("\n[-] Validation interrupted. Exiting gatekeeper.")
+            return None
+
+    # Rejection Sub-Menu Loop
+    while True:
+        print("\n" + "-" * 50)
+        print("                REJECTION SUB-MENU")
+        print("-" * 50)
+        print("  [1] Force Original Protocol (Override safety guidance)")
+        print("  [2] Absolute Rest Week (Force all days to Z0, 0 minutes)")
+        print("  [3] Readjust Plan (Provide subjective feedback on how you feel)")
+        print("  [4] Cancel/Exit Validation")
+        print("-" * 50)
+        
+        try:
+            sub_choice = input("Select option [1-4]: ").strip()
+            if sub_choice == "1":
+                goal = settings.distance_goal
+                mileage = settings.target_weekly_mileage
+                pace_multiplier = 6.0 if goal in ["5K", "10K"] else 6.5
+                total_duration = mileage * pace_multiplier
+                
+                splits = {
+                    "Day 1: Speed Session": (0.20, 5 if goal in ["5K", "10K"] else 3, "VO2 Max Intervals" if goal in ["5K", "10K"] else "Threshold Tempo Run"),
+                    "Day 3: Easy Run": (0.35, 2, "Easy Recovery Run"),
+                    "Day 6: Long Run": (0.45, 3 if goal in ["5K", "10K"] else 2, "Fartlek Run" if goal in ["5K", "10K"] else "Aerobic Base Run")
+                }
+                
+                schedule = {}
+                for day_key, (pct, orig_zone, base_name) in splits.items():
+                    orig_duration = int(round(total_duration * pct))
+                    original_workout = f"{orig_duration}-minute {base_name}"
+                    schedule[day_key] = WorkoutDraft(
+                        original_workout=original_workout,
+                        adjusted_workout=original_workout,
+                        target_zone=orig_zone,
+                        duration_minutes=orig_duration,
+                        rationale="User bypassed agent safety warnings and forced the original unadjusted training protocol.",
+                        physiological_focus="Aerobic base development & autonomic stability validation"
+                    )
+                forced_draft = WeeklyScheduleDraft(schedule=schedule)
+                logger.warning("User forced original unadjusted weekly protocol.")
+                
+                base_time = resolve_target_schedule_time()
+                for day_key, workout in forced_draft.schedule.items():
+                    if "Day 1" in day_key:
+                        offset = 1
+                    elif "Day 3" in day_key:
+                        offset = 3
+                    elif "Day 6" in day_key:
+                        offset = 6
+                    else:
+                        offset = 0
+                    workout.scheduled_start_iso = (base_time + datetime.timedelta(days=offset)).isoformat()
+                return forced_draft
+                
+            elif sub_choice == "2":
+                schedule = {}
+                for day_key in ["Day 1: Speed Session", "Day 3: Easy Run", "Day 6: Long Run"]:
+                    schedule[day_key] = WorkoutDraft(
+                        original_workout="Planned session",
+                        adjusted_workout="Rest Day",
+                        target_zone=0,
+                        duration_minutes=0,
+                        rationale="User requested an absolute rest week, overriding all planned exercise.",
+                        physiological_focus="Autonomic baseline assessment"
+                    )
+                rest_draft = WeeklyScheduleDraft(schedule=schedule)
+                logger.info("Absolute rest week forced by user.")
+                
+                base_time = resolve_target_schedule_time()
+                for day_key, workout in rest_draft.schedule.items():
+                    if "Day 1" in day_key:
+                        offset = 1
+                    elif "Day 3" in day_key:
+                        offset = 3
+                    elif "Day 6" in day_key:
+                        offset = 6
+                    else:
+                        offset = 0
+                    workout.scheduled_start_iso = (base_time + datetime.timedelta(days=offset)).isoformat()
+                return rest_draft
+                
+            elif sub_choice == "3":
+                feedback = input("\nHow do you feel? (e.g. 'legs sore', 'too tired'): ").strip()
+                if not feedback:
+                    feedback = "User requested manual adjustment without details."
+                
+                print("\nRegenerating weekly plan incorporating subjective feedback...")
+                draft_2 = regenerate_weekly_schedule_with_feedback(state_path, settings, feedback, initial_draft)
+                break
+                
+            elif sub_choice == "4":
+                logger.info("User cancelled validation loop.")
+                return None
+            else:
+                print("[-] Invalid choice. Please pick between 1 and 4.")
+        except (KeyboardInterrupt, EOFError):
+            print("\n[-] Selection interrupted. Exiting gatekeeper.")
+            return None
+
+    # Comparing drafts
+    print("\n" + "=" * 65)
+    print("                 COMPARING PROPOSED WEEKLY SCHEDULES")
+    print("=" * 65)
+    print_weekly_schedule_card("DRAFT 1: ORIGINAL RECOMMENDATION", initial_draft)
+    print_weekly_schedule_card("DRAFT 2: FEEDBACK-ADJUSTED PLAN", draft_2)
+    print("=" * 65)
+
+    while True:
+        print("\nFinal Decision Matrix:")
+        print("  [1] Approve Draft 2 (Feedback-adjusted)")
+        print("  [2] Revert to Draft 1 (Original recommendation)")
+        print("  [3] Safety Override (Absolute Rest Week)")
+        print("  [4] Cancel/Exit")
+        
+        try:
+            final_choice = input("Select final action [1-4]: ").strip()
+            if final_choice == "1":
+                logger.info("User approved Draft 2 (feedback-adjusted weekly).")
+                base_time = resolve_target_schedule_time()
+                for day_key, workout in draft_2.schedule.items():
+                    if "Day 1" in day_key:
+                        offset = 1
+                    elif "Day 3" in day_key:
+                        offset = 3
+                    elif "Day 6" in day_key:
+                        offset = 6
+                    else:
+                        offset = 0
+                    workout.scheduled_start_iso = (base_time + datetime.timedelta(days=offset)).isoformat()
+                return draft_2
+            elif final_choice == "2":
+                logger.info("User reverted to Draft 1 (original recommendation weekly).")
+                base_time = resolve_target_schedule_time()
+                for day_key, workout in initial_draft.schedule.items():
+                    if "Day 1" in day_key:
+                        offset = 1
+                    elif "Day 3" in day_key:
+                        offset = 3
+                    elif "Day 6" in day_key:
+                        offset = 6
+                    else:
+                        offset = 0
+                    workout.scheduled_start_iso = (base_time + datetime.timedelta(days=offset)).isoformat()
+                return initial_draft
+            elif final_choice == "3":
+                schedule = {}
+                for day_key in ["Day 1: Speed Session", "Day 3: Easy Run", "Day 6: Long Run"]:
+                    schedule[day_key] = WorkoutDraft(
+                        original_workout="Planned session",
+                        adjusted_workout="Rest Day",
+                        target_zone=0,
+                        duration_minutes=0,
+                        rationale="User selected Safety Override to force an absolute rest week.",
+                        physiological_focus="Autonomic baseline assessment"
+                    )
+                rest_draft = WeeklyScheduleDraft(schedule=schedule)
+                logger.info("User forced safety override rest week.")
+                base_time = resolve_target_schedule_time()
+                for day_key, workout in rest_draft.schedule.items():
+                    if "Day 1" in day_key:
+                        offset = 1
+                    elif "Day 3" in day_key:
+                        offset = 3
+                    elif "Day 6" in day_key:
+                        offset = 6
+                    else:
+                        offset = 0
+                    workout.scheduled_start_iso = (base_time + datetime.timedelta(days=offset)).isoformat()
                 return rest_draft
             elif final_choice == "4":
                 logger.info("User cancelled validation in final matrix.")

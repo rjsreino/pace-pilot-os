@@ -29,4 +29,9 @@ token.json
 client_secret_*.json
 *.apps.googleusercontent.com.json
 
+# PacePilot Generated Outputs
+state.json
+*.ics
+
+
 

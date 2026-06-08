@@ -5,11 +5,17 @@ import datetime
 import requests
 
 from core.ingestion import EnvironmentState
-from core.models import WorkoutDraft
+from core.models import WorkoutDraft, UserSettings, WeeklyScheduleDraft
 from core.parser import parse_workout_details, rebuild_workout_name
 from core.sentiment import detect_sentiment, stem_word
 from core.heuristics import evaluate_heuristics
-from core.fallback import generate_fallback_draft, generate_fallback_with_feedback
+from core.fallback import (
+    generate_fallback_draft,
+    generate_fallback_with_feedback,
+    generate_fallback_weekly_schedule,
+    generate_fallback_weekly_schedule_with_feedback
+)
+
 
 # Set up logging
 logger = logging.getLogger("PacePilot.Engine")
@@ -276,9 +282,359 @@ Safety Guidelines:
         return fallback
 
 
+def generate_weekly_schedule_draft(settings: UserSettings, state: EnvironmentState) -> WeeklyScheduleDraft:
+    """
+    Central reasoning coordinator for weekly macro planning. Evaluates heuristics,
+    then dispatches to Google Gemini with Pydantic JSON response constraints.
+    Falls back to deterministic offline generation if keys are missing or requests fail.
+    """
+    heuristics = evaluate_heuristics(state, "60-minute Run", 3, 60)
+    
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        logger.warning("No Gemini/Google API key found. Defaulting to local offline weekly schedule generator.")
+        return generate_fallback_weekly_schedule(settings, state, heuristics)
+
+    try:
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+        headers = {"Content-Type": "application/json"}
+        params = {"key": api_key}
+
+        prompt_text = f"""
+You are the reasoning engine of PacePilot, an agentic AI running coach.
+Your task is to analyze the athlete's race distance goal and target weekly mileage along with environmental and recovery metrics to distribute the mileage across three specialized days of the week:
+- Day 1: Speed Session (20% of volume)
+- Day 3: Easy Run (35% of volume)
+- Day 6: Long Run (45% of volume)
+
+Athlete Ingested Parameters:
+- Distance Goal: {settings.distance_goal}
+- Target Weekly Mileage: {settings.target_weekly_mileage} km
+- Sleep Score: {state.biometric.sleep_score}/100
+- HRV Status: {state.biometric.hrv_status}
+- Acute Training Load: {state.biometric.acute_training_load}
+- Local Temperature: {state.weather.temperature_c}°C
+- Local Humidity: {state.weather.humidity}%
+- Weather Conditions: {state.weather.summary}
+
+Heuristic Safety Caps to apply to ALL generated workouts:
+- Temp Warning Triggered: {heuristics['temp_warning']}
+- Biometric Recovery Warning Triggered: {heuristics['bio_warning']}
+- Compounding Safety Lockout Triggered: {heuristics['compounding_warning']}
+
+Training Philosophy rules:
+1. 5K / 10K Goals: Short, high-intensity intervals (Zone 4/5 VO2 Max work), high stride frequencies, and shorter, faster long run sessions.
+2. Half Marathon / Marathon Goals: Progressive steady-state tempo runs (Zone 3 aerobic threshold), cumulative volume handling, and long slow base runs (Zone 2 mitochondrial development).
+3. Volume constraint: Distribute target weekly mileage to durations based on a baseline pace translation (approx 6.0 min/km for 5K/10K; 6.5 min/km for HALF/MARATHON).
+   Total duration minutes = target weekly mileage * pace translation.
+   Split this total duration into:
+     - Day 1: Speed Session (20%)
+     - Day 3: Easy Run (35%)
+     - Day 6: Long Run (45%)
+4. Safety constraints:
+   - If Compounding Safety Lockout is True: You MUST set the adjusted workouts for ALL days to an Active Recovery Walk (Zone 1, 30 minutes). Rationale must explain the compounding safety lockout.
+   - If Biometric Recovery Warning is True: Cap all heart rate intensities to Zone 1 or Zone 2, and reduce the durations of all workouts by 40% (i.e. scale by 0.6). Day 1 (Speed Session) must be capped at Zone 1 (active walk).
+   - If Temperature Warning is True: Scale all durations down by 20% to prevent excess heat load.
+   - Keep the rationale clear, concise, and capped at a maximum of 2 to 3 sentences. Avoid verbose introductory fluff.
+   - Provide a single, powerful line item (under 10 words) identifying the primary physiological factor being evaluated or protected (e.g., 'Autonomic fatigue prevention & cardiac drift mitigation') in the 'physiological_focus' field of each workout.
+"""
+
+        schema = {
+            "type": "OBJECT",
+            "properties": {
+                "schedule": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "Day 1: Speed Session": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "original_workout": {"type": "STRING"},
+                                "adjusted_workout": {"type": "STRING"},
+                                "target_zone": {"type": "INTEGER"},
+                                "duration_minutes": {"type": "INTEGER"},
+                                "rationale": {"type": "STRING"},
+                                "physiological_focus": {"type": "STRING"}
+                            },
+                            "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale", "physiological_focus"]
+                        },
+                        "Day 3: Easy Run": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "original_workout": {"type": "STRING"},
+                                "adjusted_workout": {"type": "STRING"},
+                                "target_zone": {"type": "INTEGER"},
+                                "duration_minutes": {"type": "INTEGER"},
+                                "rationale": {"type": "STRING"},
+                                "physiological_focus": {"type": "STRING"}
+                            },
+                            "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale", "physiological_focus"]
+                        },
+                        "Day 6: Long Run": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "original_workout": {"type": "STRING"},
+                                "adjusted_workout": {"type": "STRING"},
+                                "target_zone": {"type": "INTEGER"},
+                                "duration_minutes": {"type": "INTEGER"},
+                                "rationale": {"type": "STRING"},
+                                "physiological_focus": {"type": "STRING"}
+                            },
+                            "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale", "physiological_focus"]
+                        }
+                    },
+                    "required": ["Day 1: Speed Session", "Day 3: Easy Run", "Day 6: Long Run"]
+                }
+            },
+            "required": ["schedule"]
+        }
+
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": prompt_text
+                        }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": schema
+            }
+        }
+
+        logger.info("Requesting structured completion from Gemini API for weekly schedule...")
+        response = requests.post(url, json=payload, headers=headers, params=params, timeout=25)
+        response.raise_for_status()
+
+        resp_json = response.json()
+        candidates = resp_json.get("candidates", [])
+        if candidates:
+            content = candidates[0].get("content", {})
+            parts = content.get("parts", [])
+            if parts:
+                raw_text = parts[0].get("text", "")
+                logger.info("Successfully fetched Gemini response.")
+                draft_dict = json.loads(raw_text)
+                return WeeklyScheduleDraft(**draft_dict)
+
+        raise ValueError("Invalid candidates block returned by Gemini API")
+
+    except Exception as e:
+        logger.error(f"Gemini API invocation failed: {e}. Falling back to offline weekly schedule generator.")
+        return generate_fallback_weekly_schedule(settings, state, heuristics)
+
+
+def regenerate_weekly_schedule_with_feedback(
+    state_path: str,
+    settings: UserSettings,
+    user_feedback: str,
+    draft_1: WeeklyScheduleDraft
+) -> WeeklyScheduleDraft:
+    """
+    Re-runs the reasoning engine incorporating user subjective feedback.
+    Maintains biometric safety boundaries (heuristics) but adapts training style.
+    Allows scaling up to the heuristic safety bounds when user feedback indicates high energy.
+    """
+    state = None
+    if os.path.exists(state_path):
+        try:
+            with open(state_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            state = EnvironmentState.model_validate(raw)
+        except Exception as e:
+            logger.error(f"Failed to read state.json during feedback regeneration: {e}")
+            
+    if state is None:
+        from core.ingestion import BiometricData, WeatherData
+        state = EnvironmentState(
+            biometric=BiometricData(sleep_score=70, hrv_status="BALANCED", acute_training_load=400.0),
+            weather=WeatherData(temperature_c=20.0, humidity=60, summary="Clear"),
+            iso_timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat()
+        )
+        
+    heuristics = evaluate_heuristics(state, "60-minute Run", 3, 60)
+
+    # Detect high-energy signals in feedback
+    sentiment = detect_sentiment(user_feedback)
+    is_high_energy = (sentiment == "high_energy")
+
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        logger.warning("No Gemini API key found for feedback regeneration. Falling back to local offline feedback weekly generator.")
+        return generate_fallback_weekly_schedule_with_feedback(settings, state, heuristics, user_feedback, draft_1)
+
+    try:
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+        headers = {"Content-Type": "application/json"}
+        params = {"key": api_key}
+
+        # Calculate safety caps for reference
+        goal = settings.distance_goal
+        mileage = settings.target_weekly_mileage
+        pace_multiplier = 6.0 if goal in ["5K", "10K"] else 6.5
+        total_duration = mileage * pace_multiplier
+        
+        # Original splits
+        splits = {
+            "Day 1: Speed Session": (0.20, 5 if goal in ["5K", "10K"] else 3),
+            "Day 3: Easy Run": (0.35, 2),
+            "Day 6: Long Run": (0.45, 3 if goal in ["5K", "10K"] else 2)
+        }
+        
+        safety_caps = {}
+        for day_key, (pct, orig_zone) in splits.items():
+            orig_duration = int(round(total_duration * pct))
+            if heuristics["compounding_warning"]:
+                max_duration = 30
+                max_zone = 1
+            elif heuristics["bio_warning"]:
+                max_duration = int(round(orig_duration * 0.6))
+                max_zone = 1 if "Speed" in day_key else 2
+            elif heuristics["temp_warning"]:
+                max_duration = int(round(orig_duration * 0.8))
+                max_zone = orig_zone
+            else:
+                max_duration = orig_duration
+                max_zone = orig_zone
+            
+            d1_w = draft_1.schedule[day_key]
+            if is_high_energy:
+                safety_caps[day_key] = {"max_zone": max_zone, "max_duration": max_duration}
+            else:
+                safety_caps[day_key] = {"max_zone": min(d1_w.target_zone, max_zone), "max_duration": min(d1_w.duration_minutes, max_duration)}
+
+        prompt_text = f"""
+You are the reasoning engine of PacePilot, an agentic AI running coach.
+The athlete rejected your initial weekly training schedule recommendation and provided subjective feedback.
+Generate a new, revised WeeklyScheduleDraft that addresses their feedback while strictly maintaining safety boundaries.
+
+Athlete's Subjective Feedback:
+- User feels: "{user_feedback}"
+
+Athlete Ingested Parameters:
+- Distance Goal: {settings.distance_goal}
+- Target Weekly Mileage: {settings.target_weekly_mileage} km
+- Sleep Score: {state.biometric.sleep_score}/100
+- HRV Status: {state.biometric.hrv_status}
+- Local Temperature: {state.weather.temperature_c}°C
+
+Your Initial Proposal (Draft 1):
+- Day 1: {draft_1.schedule['Day 1: Speed Session'].adjusted_workout} (Zone {draft_1.schedule['Day 1: Speed Session'].target_zone}, {draft_1.schedule['Day 1: Speed Session'].duration_minutes} min)
+- Day 3: {draft_1.schedule['Day 3: Easy Run'].adjusted_workout} (Zone {draft_1.schedule['Day 3: Easy Run'].target_zone}, {draft_1.schedule['Day 3: Easy Run'].duration_minutes} min)
+- Day 6: {draft_1.schedule['Day 6: Long Run'].adjusted_workout} (Zone {draft_1.schedule['Day 6: Long Run'].target_zone}, {draft_1.schedule['Day 6: Long Run'].duration_minutes} min)
+
+Safety Guidelines (DO NOT EXCEED):
+- Day 1 Cap: Zone {safety_caps['Day 1: Speed Session']['max_zone']}, Duration {safety_caps['Day 1: Speed Session']['max_duration']} min
+- Day 3 Cap: Zone {safety_caps['Day 3: Easy Run']['max_zone']}, Duration {safety_caps['Day 3: Easy Run']['max_duration']} min
+- Day 6 Cap: Zone {safety_caps['Day 6: Long Run']['max_zone']}, Duration {safety_caps['Day 6: Long Run']['max_duration']} min
+
+Adaptation instructions:
+1. You MUST NOT exceed the Maximum Safety Zone Cap or the Maximum Recommended Duration for each day.
+2. Adapt the workouts to address user feedback:
+   - If user reports high-energy/readiness ("{user_feedback}"), you may scale the workouts UP to the maximum allowed by the safety bounds.
+   - If user reports soreness/fatigue/pain, scale all workouts DOWN or modify structure accordingly (e.g. Day 1 becomes walk, Day 3 & 6 are shortened or turned into mobility/stretching).
+3. Keep the rationales clear, concise, and capped at 2 to 3 sentences.
+4. Provide a single, powerful physiological_focus under 10 words for each workout.
+"""
+
+        schema = {
+            "type": "OBJECT",
+            "properties": {
+                "schedule": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "Day 1: Speed Session": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "original_workout": {"type": "STRING"},
+                                "adjusted_workout": {"type": "STRING"},
+                                "target_zone": {"type": "INTEGER"},
+                                "duration_minutes": {"type": "INTEGER"},
+                                "rationale": {"type": "STRING"},
+                                "physiological_focus": {"type": "STRING"}
+                            },
+                            "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale", "physiological_focus"]
+                        },
+                        "Day 3: Easy Run": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "original_workout": {"type": "STRING"},
+                                "adjusted_workout": {"type": "STRING"},
+                                "target_zone": {"type": "INTEGER"},
+                                "duration_minutes": {"type": "INTEGER"},
+                                "rationale": {"type": "STRING"},
+                                "physiological_focus": {"type": "STRING"}
+                            },
+                            "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale", "physiological_focus"]
+                        },
+                        "Day 6: Long Run": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "original_workout": {"type": "STRING"},
+                                "adjusted_workout": {"type": "STRING"},
+                                "target_zone": {"type": "INTEGER"},
+                                "duration_minutes": {"type": "INTEGER"},
+                                "rationale": {"type": "STRING"},
+                                "physiological_focus": {"type": "STRING"}
+                            },
+                            "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale", "physiological_focus"]
+                        }
+                    },
+                    "required": ["Day 1: Speed Session", "Day 3: Easy Run", "Day 6: Long Run"]
+                }
+            },
+            "required": ["schedule"]
+        }
+
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": prompt_text
+                        }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": schema
+            }
+        }
+
+        logger.info("Requesting feedback-adjusted completion from Gemini API for weekly schedule...")
+        response = requests.post(url, json=payload, headers=headers, params=params, timeout=25)
+        response.raise_for_status()
+
+        resp_json = response.json()
+        candidates = resp_json.get("candidates", [])
+        if candidates:
+            content = candidates[0].get("content", {})
+            parts = content.get("parts", [])
+            if parts:
+                raw_text = parts[0].get("text", "")
+                logger.info("Successfully fetched feedback-adjusted Gemini response.")
+                draft_dict = json.loads(raw_text)
+                draft = WeeklyScheduleDraft(**draft_dict)
+                for day_key, cap in safety_caps.items():
+                    w = draft.schedule[day_key]
+                    w.target_zone = min(cap["max_zone"], w.target_zone)
+                    w.duration_minutes = min(cap["max_duration"], w.duration_minutes)
+                return draft
+
+        raise ValueError("Invalid candidates block returned by Gemini API")
+
+    except Exception as e:
+        logger.error(f"Feedback-adjusted Gemini API call failed: {e}. Falling back to offline feedback weekly generator.")
+        return generate_fallback_weekly_schedule_with_feedback(settings, state, heuristics, user_feedback, draft_1)
+
+
 # ==========================================
 # 5. Verification Execution
 # ==========================================
+
 
 if __name__ == "__main__":
     from dotenv import load_dotenv

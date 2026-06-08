@@ -7,7 +7,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
-from core.models import WorkoutDraft
+from core.models import WorkoutDraft, WeeklyScheduleDraft
 
 # Set up logging
 logger = logging.getLogger("PacePilot.Execution")
@@ -17,14 +17,16 @@ if not logger.handlers:
 # Define Google Calendar scopes
 SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 
-def execute_final_action(draft: WorkoutDraft) -> bool:
+def execute_final_action(draft: WeeklyScheduleDraft | WorkoutDraft) -> bool:
     """
-    Executes final action for an approved WorkoutDraft:
-    1. Generates local iCalendar (.ics) event and writes it to workspace root.
-    2. Scaffolds authentication and service creation for Google Calendar API.
+    Executes final action for an approved WeeklyScheduleDraft or WorkoutDraft:
+    1. Generates local iCalendar (.ics) event(s) and writes to workspace root.
+    2. Batch inserts events to Google Calendar.
     """
-    logger.info(f"Executing final actions for workout: '{draft.adjusted_workout}'")
-    
+    if isinstance(draft, WorkoutDraft):
+        draft = WeeklyScheduleDraft(schedule={"Workout": draft})
+        
+    logger.info("Executing final actions for weekly schedule")
     root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     
     # ==========================================
@@ -33,50 +35,65 @@ def execute_final_action(draft: WorkoutDraft) -> bool:
     try:
         now = datetime.datetime.now(datetime.timezone.utc)
         dtstamp = now.strftime("%Y%m%dT%H%M%SZ")
-        if draft.scheduled_start_iso:
-            start_time = datetime.datetime.fromisoformat(draft.scheduled_start_iso)
-        else:
-            start_time = now
-        start_utc = start_time.astimezone(datetime.timezone.utc)
-        dtstart = start_utc.strftime("%Y%m%dT%H%M%SZ")
-        end_utc = start_utc + datetime.timedelta(minutes=draft.duration_minutes)
-        dtend = end_utc.strftime("%Y%m%dT%H%M%SZ")
-        uid = f"pacepilot-{uuid.uuid4()}"
-        
-        # Clean rationale newlines for single-line string encoding in ICS description field
-        clean_rationale = draft.rationale.replace("\r", "").replace("\n", " ")
-        description_text = (
-            f"Target Heart Rate Zone: Zone {draft.target_zone}\\n"
-            f"Target Duration: {draft.duration_minutes} minutes\\n"
-            f"Original Workout: {draft.original_workout}\\n"
-            f"Physiological Focus: {getattr(draft, 'physiological_focus', 'Autonomic baseline assessment')}\\n\\n"
-            f"Rationale: {clean_rationale}"
-        )
         
         ics_lines = [
             "BEGIN:VCALENDAR",
             "VERSION:2.0",
-            "PRODID:-//PacePilot//Running Coach//EN",
-            "BEGIN:VEVENT",
-            f"UID:{uid}",
-            f"DTSTAMP:{dtstamp}",
-            f"DTSTART:{dtstart}",
-            f"DTEND:{dtend}",
-            f"SUMMARY:PacePilot: {draft.adjusted_workout}",
-            f"DESCRIPTION:{description_text}",
-            "STATUS:CONFIRMED",
-            "END:VEVENT",
-            "END:VCALENDAR"
+            "PRODID:-//PacePilot//Running Coach//EN"
         ]
+        
+        for day_key, workout in draft.schedule.items():
+            if workout.scheduled_start_iso:
+                start_time = datetime.datetime.fromisoformat(workout.scheduled_start_iso)
+            else:
+                if "Day 1" in day_key:
+                    offset = 1
+                elif "Day 3" in day_key:
+                    offset = 3
+                elif "Day 6" in day_key:
+                    offset = 6
+                else:
+                    offset = 0
+                start_time = now + datetime.timedelta(days=offset)
+                
+            start_utc = start_time.astimezone(datetime.timezone.utc)
+            dtstart = start_utc.strftime("%Y%m%dT%H%M%SZ")
+            end_utc = start_utc + datetime.timedelta(minutes=workout.duration_minutes)
+            dtend = end_utc.strftime("%Y%m%dT%H%M%SZ")
+            uid = f"pacepilot-{uuid.uuid4()}"
+            
+            clean_rationale = workout.rationale.replace("\r", "").replace("\n", " ")
+            description_text = (
+                f"Target Heart Rate Zone: Zone {workout.target_zone}\\n"
+                f"Target Duration: {workout.duration_minutes} minutes\\n"
+                f"Original Workout: {workout.original_workout}\\n"
+                f"Physiological Focus: {workout.physiological_focus}\\n\\n"
+                f"Rationale: {clean_rationale}"
+            )
+            
+            event_lines = [
+                "BEGIN:VEVENT",
+                f"UID:{uid}",
+                f"DTSTAMP:{dtstamp}",
+                f"DTSTART:{dtstart}",
+                f"DTEND:{dtend}",
+                f"SUMMARY:PacePilot: {workout.adjusted_workout}",
+                f"DESCRIPTION:{description_text}",
+                "STATUS:CONFIRMED",
+                "END:VEVENT"
+            ]
+            ics_lines.extend(event_lines)
+            
+        ics_lines.append("END:VCALENDAR")
         ics_content = "\r\n".join(ics_lines) + "\r\n"
         
         ics_path = os.path.join(root_dir, "pacepilot_workout.ics")
         with open(ics_path, "w", encoding="utf-8") as f:
             f.write(ics_content)
-        logger.info(f"Successfully generated local iCalendar event: '{ics_path}'")
+        logger.info(f"Successfully generated local iCalendar schedule file: '{ics_path}'")
         
     except Exception as e:
-        logger.error(f"Failed to generate local iCalendar event: {e}")
+        logger.error(f"Failed to generate local iCalendar events: {e}")
         return False
 
     # ==========================================
@@ -112,51 +129,58 @@ def execute_final_action(draft: WorkoutDraft) -> bool:
         service = build("calendar", "v3", credentials=creds)
         logger.info(f"Google Calendar service authenticated successfully for Calendar ID: {calendar_id}")
         
-        # Calculate start and end times
-        if draft.scheduled_start_iso:
-            start_time = datetime.datetime.fromisoformat(draft.scheduled_start_iso)
-        else:
-            start_time = datetime.datetime.now(datetime.timezone.utc)
-        start_utc = start_time.astimezone(datetime.timezone.utc)
-        end_utc = start_utc + datetime.timedelta(minutes=draft.duration_minutes)
-        
-        # Format workout description
-        description_text = (
-            f"Target Heart Rate Zone: Zone {draft.target_zone}\n"
-            f"Target Duration: {draft.duration_minutes} minutes\n"
-            f"Original Workout: {draft.original_workout}\n"
-            f"Physiological Focus: {getattr(draft, 'physiological_focus', 'Autonomic baseline assessment')}\n\n"
-            f"Rationale: {draft.rationale}"
-        )
-        
-        # Construct event body
-        event_body = {
-            "summary": f"PacePilot: {draft.adjusted_workout}",
-            "description": description_text,
-            "start": {
-                "dateTime": start_utc.isoformat(),
-                "timeZone": "UTC"
-            },
-            "end": {
-                "dateTime": end_utc.isoformat(),
-                "timeZone": "UTC"
+        for day_key, workout in draft.schedule.items():
+            if workout.scheduled_start_iso:
+                start_time = datetime.datetime.fromisoformat(workout.scheduled_start_iso)
+            else:
+                if "Day 1" in day_key:
+                    offset = 1
+                elif "Day 3" in day_key:
+                    offset = 3
+                elif "Day 6" in day_key:
+                    offset = 6
+                else:
+                    offset = 0
+                start_time = now + datetime.timedelta(days=offset)
+                
+            start_utc = start_time.astimezone(datetime.timezone.utc)
+            end_utc = start_utc + datetime.timedelta(minutes=workout.duration_minutes)
+            
+            description_text = (
+                f"Target Heart Rate Zone: Zone {workout.target_zone}\n"
+                f"Target Duration: {workout.duration_minutes} minutes\n"
+                f"Original Workout: {workout.original_workout}\n"
+                f"Physiological Focus: {workout.physiological_focus}\n\n"
+                f"Rationale: {workout.rationale}"
+            )
+            
+            event_body = {
+                "summary": f"PacePilot: {workout.adjusted_workout}",
+                "description": description_text,
+                "start": {
+                    "dateTime": start_utc.isoformat(),
+                    "timeZone": "UTC"
+                },
+                "end": {
+                    "dateTime": end_utc.isoformat(),
+                    "timeZone": "UTC"
+                }
             }
-        }
-        
-        logger.info(f"Dispatching event payload to Google Calendar ID: {calendar_id}...")
-        created_event = service.events().insert(calendarId=calendar_id, body=event_body).execute()
-        
-        logger.info(
-            f"[SUCCESS] Workout event successfully injected into Google Calendar! "
-            f"Link: {created_event.get('htmlLink')}"
-        )
-        
+            
+            logger.info(f"Dispatching event payload for '{workout.adjusted_workout}' to Google Calendar ID: {calendar_id}...")
+            created_event = service.events().insert(calendarId=calendar_id, body=event_body).execute()
+            logger.info(
+                f"[SUCCESS] Workout event successfully injected into Google Calendar! "
+                f"Link: {created_event.get('htmlLink')}"
+            )
+            
     except Exception as e:
         logger.error(f"Error during Google Calendar execution: {e}")
         return True
         
     return True
 
-def sync_workout_to_calendar(draft: WorkoutDraft) -> bool:
+def sync_workout_to_calendar(draft) -> bool:
     """Wrapper function to maintain backward compatibility."""
     return execute_final_action(draft)
+

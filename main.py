@@ -10,9 +10,10 @@ if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
 from core.ingestion import fetch_daily_context, EnvironmentState
-from core.engine import generate_workout_draft
-from core.validation import prompt_user_validation
+from core.engine import generate_weekly_schedule_draft
+from core.validation import resolve_user_settings, prompt_weekly_user_validation
 from core.execution import execute_final_action
+
 
 # Set up logging
 logger = logging.getLogger("PacePilot.Main")
@@ -88,22 +89,20 @@ def main():
         logger.error(f"Aborting: Failed to read or parse state.json: {e}")
         return
 
-    # Prompt the user for their baseline target workout for the day
-    default_workout = "60-minute Threshold Tempo Run"
+    # Prompt/Resolve user settings (Distance Goal and Weekly Mileage)
     try:
-        user_input = input(f"\nEnter baseline workout target for today [Default: '{default_workout}']: ").strip()
+        settings = resolve_user_settings()
     except (KeyboardInterrupt, EOFError):
         print("\n[-] Initialization interrupted. Exiting.")
         return
 
-    original_workout = user_input if user_input else default_workout
-    initial_draft = generate_workout_draft(original_workout, state)
+    initial_draft = generate_weekly_schedule_draft(settings, state)
 
     # ----------------------------------------------------
     # Phase 3: Interactive Validation Gatekeeper
     # ----------------------------------------------------
     logger.info("Executing Phase 3: Interactive Validation Gatekeeper...")
-    final_draft = prompt_user_validation(state_file_path, initial_draft)
+    final_draft = prompt_weekly_user_validation(state_file_path, settings, initial_draft)
 
     # ----------------------------------------------------
     # Phase 4: Final Action Execution Synchronization

@@ -48,7 +48,8 @@ def execute_final_action(draft: WorkoutDraft) -> bool:
         description_text = (
             f"Target Heart Rate Zone: Zone {draft.target_zone}\\n"
             f"Target Duration: {draft.duration_minutes} minutes\\n"
-            f"Original Workout: {draft.original_workout}\\n\\n"
+            f"Original Workout: {draft.original_workout}\\n"
+            f"Physiological Focus: {getattr(draft, 'physiological_focus', 'Autonomic baseline assessment')}\\n\\n"
             f"Rationale: {clean_rationale}"
         )
         
@@ -123,7 +124,8 @@ def execute_final_action(draft: WorkoutDraft) -> bool:
         description_text = (
             f"Target Heart Rate Zone: Zone {draft.target_zone}\n"
             f"Target Duration: {draft.duration_minutes} minutes\n"
-            f"Original Workout: {draft.original_workout}\n\n"
+            f"Original Workout: {draft.original_workout}\n"
+            f"Physiological Focus: {getattr(draft, 'physiological_focus', 'Autonomic baseline assessment')}\n\n"
             f"Rationale: {draft.rationale}"
         )
         

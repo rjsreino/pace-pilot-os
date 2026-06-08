@@ -69,6 +69,7 @@ Decision Directives:
 2. If Biometric Recovery Warning is True, cap the heart rate intensity to Zone 1 or Zone 2, and reduce the duration.
 3. If Temperature Warning is True, scale duration down by 15-20% to prevent excess heat load.
 4. Keep the rationale clear, concise, and capped at a maximum of 2 to 3 sentences. Avoid verbose introductory fluff. Use precise running terminology (e.g., cardiac drift, autonomic fatigue, recovery window) only where directly informative to the adjustment.
+5. Provide a single, powerful line item (under 10 words) identifying the primary physiological factor being evaluated or protected (e.g., 'Autonomic fatigue prevention & cardiac drift mitigation', 'Central nervous system down-regulation', or 'Mitochondrial biogenesis optimization') in the 'physiological_focus' field.
 """
 
         payload = {
@@ -90,9 +91,10 @@ Decision Directives:
                         "adjusted_workout": {"type": "STRING"},
                         "target_zone": {"type": "INTEGER"},
                         "duration_minutes": {"type": "INTEGER"},
-                        "rationale": {"type": "STRING"}
+                        "rationale": {"type": "STRING"},
+                        "physiological_focus": {"type": "STRING"}
                     },
-                    "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale"]
+                    "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale", "physiological_focus"]
                 }
             }
         }
@@ -215,6 +217,7 @@ Safety Guidelines:
    - If user reports high-energy/readiness ("{user_feedback}"), you may scale the workout UP to the maximum allowed by the safety bounds.
    - If user reports soreness/fatigue, scale the workout DOWN from Draft 1 and change structure accordingly (e.g. walk/stretching).
 3. Keep the rationale clear, concise, and capped at a maximum of 2 to 3 sentences. Avoid verbose introductory fluff. Use precise running terminology (e.g., cardiac drift, autonomic fatigue, recovery window) only where directly informative to the adjustment.
+4. Provide a single, powerful line item (under 10 words) identifying the primary physiological factor being evaluated or protected (e.g., 'Autonomic fatigue prevention & cardiac drift mitigation', 'Central nervous system down-regulation', or 'Mitochondrial biogenesis optimization') in the 'physiological_focus' field.
 """
 
         payload = {
@@ -236,9 +239,10 @@ Safety Guidelines:
                         "adjusted_workout": {"type": "STRING"},
                         "target_zone": {"type": "INTEGER"},
                         "duration_minutes": {"type": "INTEGER"},
-                        "rationale": {"type": "STRING"}
+                        "rationale": {"type": "STRING"},
+                        "physiological_focus": {"type": "STRING"}
                     },
-                    "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale"]
+                    "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale", "physiological_focus"]
                 }
             }
         }

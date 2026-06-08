@@ -7,4 +7,6 @@ class WorkoutDraft(BaseModel):
     duration_minutes: int = Field(..., description="Target duration of the workout in minutes")
     rationale: str = Field(..., description="Detailed explanation of physiological or environmental adjustments")
     scheduled_start_iso: str = Field(default="", description="ISO 8601 string representing when the run is scheduled to begin")
+    physiological_focus: str = Field(default="Autonomic baseline assessment", description="Primary physiological factor being evaluated or protected")
+
 

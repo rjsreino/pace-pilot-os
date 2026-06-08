@@ -34,7 +34,8 @@ def generate_fallback_draft(
             adjusted_workout=adjusted_workout,
             target_zone=1,
             duration_minutes=30,
-            rationale=rationale
+            rationale=rationale,
+            physiological_focus="Cardiovascular strain & acute thermal stress protection"
         )
         
     elif heuristics["bio_warning"]:
@@ -51,7 +52,8 @@ def generate_fallback_draft(
             adjusted_workout=adjusted_workout,
             target_zone=adjusted_zone,
             duration_minutes=adjusted_duration,
-            rationale=rationale
+            rationale=rationale,
+            physiological_focus="Parasympathetic depression & injury prevention safety cap"
         )
         
     elif heuristics["temp_warning"]:
@@ -67,7 +69,8 @@ def generate_fallback_draft(
             adjusted_workout=adjusted_workout,
             target_zone=original_zone,
             duration_minutes=adjusted_duration,
-            rationale=rationale
+            rationale=rationale,
+            physiological_focus="Thermal cardiac drift & blood viscosity management"
         )
         
     else:
@@ -80,7 +83,8 @@ def generate_fallback_draft(
             adjusted_workout=original_workout,
             target_zone=original_zone,
             duration_minutes=original_duration,
-            rationale=rationale
+            rationale=rationale,
+            physiological_focus="Aerobic base development & autonomic stability validation"
         )
 
 
@@ -159,10 +163,21 @@ def generate_fallback_with_feedback(
             f"Heart rate is capped at Zone {target_zone} and duration reduced to {duration_minutes} minutes to align with subjective recovery state."
         )
 
+    # Map physiological focus based on state
+    if sentiment == "pain" or heuristics["bio_warning"]:
+        phys_focus = "Parasympathetic depression & injury prevention safety cap"
+    elif heuristics["compounding_warning"]:
+        phys_focus = "Cardiovascular strain & acute thermal stress protection"
+    elif heuristics["temp_warning"]:
+        phys_focus = "Thermal cardiac drift & blood viscosity management"
+    else:
+        phys_focus = "Aerobic base development & autonomic stability validation"
+
     return WorkoutDraft(
         original_workout=original_workout,
         adjusted_workout=adjusted_workout,
         target_zone=target_zone,
         duration_minutes=duration_minutes,
-        rationale=rationale
+        rationale=rationale,
+        physiological_focus=phys_focus
     )

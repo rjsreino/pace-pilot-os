@@ -153,6 +153,13 @@ target_weekly_mileage = st.sidebar.slider(
     step=1.0
 )
 
+selected_city = st.sidebar.selectbox(
+    "Select Target Training Location:",
+    options=list(CITY_DB.keys()),
+    index=0
+)
+lat, lon = CITY_DB[selected_city]
+
 # Manual Health Override Panel inside Sidebar
 st.sidebar.write("---")
 st.sidebar.subheader("🛠️ Ingestion Manual Overrides")
@@ -161,8 +168,6 @@ manual_hrv = st.sidebar.selectbox("Override: HRV Status", options=["BALANCED", "
 
 # Advanced Configuration
 with st.sidebar.expander("⚙️ Advanced Coordinates & Credentials"):
-    selected_city = st.selectbox("Select Target Training Location Location:", options=list(CITY_DB.keys()), index=0)
-    lat, lon = CITY_DB[selected_city]
     st.write(f"📍 Coordinates: **{lat:.4f}, {lon:.4f}**")
     
     st.write("---")

@@ -12,7 +12,8 @@ def generate_fallback_draft(
     original_zone: int,
     original_duration: int,
     state: EnvironmentState,
-    heuristics: dict
+    heuristics: dict,
+    session_slot: str = ""
 ) -> WorkoutDraft:
     """
     Generates a high-quality WorkoutDraft object locally using deterministic templates.
@@ -35,7 +36,8 @@ def generate_fallback_draft(
             target_zone=1,
             duration_minutes=30,
             rationale=rationale,
-            physiological_focus="Cardiovascular strain & acute thermal stress protection"
+            physiological_focus="Cardiovascular strain & acute thermal stress protection",
+            session_slot=session_slot
         )
         
     elif heuristics["bio_warning"]:
@@ -53,7 +55,8 @@ def generate_fallback_draft(
             target_zone=adjusted_zone,
             duration_minutes=adjusted_duration,
             rationale=rationale,
-            physiological_focus="Parasympathetic depression & injury prevention safety cap"
+            physiological_focus="Parasympathetic depression & injury prevention safety cap",
+            session_slot=session_slot
         )
         
     elif heuristics["temp_warning"]:
@@ -70,7 +73,8 @@ def generate_fallback_draft(
             target_zone=original_zone,
             duration_minutes=adjusted_duration,
             rationale=rationale,
-            physiological_focus="Thermal cardiac drift & blood viscosity management"
+            physiological_focus="Thermal cardiac drift & blood viscosity management",
+            session_slot=session_slot
         )
         
     else:
@@ -84,7 +88,8 @@ def generate_fallback_draft(
             target_zone=original_zone,
             duration_minutes=original_duration,
             rationale=rationale,
-            physiological_focus="Aerobic base development & autonomic stability validation"
+            physiological_focus="Aerobic base development & autonomic stability validation",
+            session_slot=session_slot
         )
 
 
@@ -95,7 +100,8 @@ def generate_fallback_with_feedback(
     state: EnvironmentState,
     heuristics: dict,
     user_feedback: str,
-    draft_1: WorkoutDraft
+    draft_1: WorkoutDraft,
+    session_slot: str = ""
 ) -> WorkoutDraft:
     """Offline rule-based fallback when Gemini API key is missing during regeneration."""
     sentiment = detect_sentiment(user_feedback)
@@ -179,7 +185,8 @@ def generate_fallback_with_feedback(
         target_zone=target_zone,
         duration_minutes=duration_minutes,
         rationale=rationale,
-        physiological_focus=phys_focus
+        physiological_focus=phys_focus,
+        session_slot=session_slot or draft_1.session_slot
     )
 
 

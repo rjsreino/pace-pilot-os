@@ -34,16 +34,19 @@ def clean_json_response(raw_text: str) -> str:
     Cleans markdown backticks (```json ... ```) and filters conversational trailing/leading text
     to extract the raw JSON string.
     """
-    raw_text = raw_text.strip()
-    if raw_text.startswith("```"):
-        import re
-        raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-        raw_text = re.sub(r"\s*```$", "", raw_text)
-    raw_text = raw_text.strip()
     import re
-    match = re.search(r"(\{.*\}|\[.*\])", raw_text, re.DOTALL)
+    raw_text = raw_text.strip()
+    
+    # 1. Strip markdown code block formatting (```json ... ``` or similar)
+    code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_text)
+    if code_block_match:
+        raw_text = code_block_match.group(1).strip()
+        
+    # 2. Extract the outermost JSON object { ... } or array [ ... ]
+    match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", raw_text)
     if match:
         raw_text = match.group(1)
+        
     return raw_text.strip()
 
 def generate_workout_draft(original_workout: str, state: EnvironmentState) -> WorkoutDraft:
@@ -653,11 +656,9 @@ Adaptation instructions:
         logger.error(f"Feedback-adjusted Gemini API call failed: {e}. Falling back to offline feedback weekly generator.")
         return generate_fallback_weekly_schedule_with_feedback(settings, state, heuristics, user_feedback, draft_1)
 
-        raise ValueError("Invalid candidates block returned by Gemini API")
 
-    except Exception as e:
-        logger.error(f"Feedback-adjusted Gemini API call failed: {e}. Falling back to offline feedback weekly generator.")
-        return generate_fallback_weekly_schedule_with_feedback(settings, state, heuristics, user_feedback, draft_1)
+# Compatibility alias
+generate_weekly_schedule = generate_weekly_schedule_draft
 
 
 # ==========================================

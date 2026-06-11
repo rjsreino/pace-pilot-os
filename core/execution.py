@@ -153,6 +153,26 @@ def execute_final_action(draft: WeeklyScheduleDraft | WorkoutDraft) -> bool:
                 f"Rationale: {workout.rationale}"
             )
             
+            # Map target_zone to Google Calendar API colorIds:
+            # - Zone 1: Graphite / Grey (colorId: "8")
+            # - Zone 2: Blueberry / Blue (colorId: "9")
+            # - Zone 3: Basil / Green (colorId: "10")
+            # - Zone 4: Tangerine / Orange (colorId: "6")
+            # - Zone 5: Tomato / Red (colorId: "11")
+            zone = workout.target_zone
+            if zone == 1:
+                color_id = "8"
+            elif zone == 2:
+                color_id = "9"
+            elif zone == 3:
+                color_id = "10"
+            elif zone == 4:
+                color_id = "6"
+            elif zone == 5:
+                color_id = "11"
+            else:
+                color_id = "8"
+            
             event_body = {
                 "summary": f"PacePilot: {workout.adjusted_workout}",
                 "description": description_text,
@@ -163,7 +183,8 @@ def execute_final_action(draft: WeeklyScheduleDraft | WorkoutDraft) -> bool:
                 "end": {
                     "dateTime": end_utc.isoformat(),
                     "timeZone": "UTC"
-                }
+                },
+                "colorId": color_id
             }
             
             logger.info(f"Dispatching event payload for '{workout.adjusted_workout}' to Google Calendar ID: {calendar_id}...")

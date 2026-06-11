@@ -44,7 +44,8 @@ def generate_workout_draft(original_workout: str, state: EnvironmentState) -> Wo
         return generate_fallback_draft(original_workout, original_zone, original_duration, state, heuristics)
 
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
         headers = {"Content-Type": "application/json"}
         params = {"key": api_key}
 
@@ -185,7 +186,8 @@ def regenerate_with_feedback(
         return fallback
 
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
         headers = {"Content-Type": "application/json"}
         params = {"key": api_key}
 
@@ -298,7 +300,8 @@ def generate_weekly_schedule_draft(settings: UserSettings, state: EnvironmentSta
         return generate_fallback_weekly_schedule(settings, state, heuristics)
 
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
         headers = {"Content-Type": "application/json"}
         params = {"key": api_key}
 
@@ -460,7 +463,8 @@ def regenerate_weekly_schedule_with_feedback(
         return generate_fallback_weekly_schedule_with_feedback(settings, state, heuristics, user_feedback, draft_1)
 
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
         headers = {"Content-Type": "application/json"}
         params = {"key": api_key}
 

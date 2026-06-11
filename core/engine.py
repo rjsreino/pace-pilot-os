@@ -29,6 +29,23 @@ if not logger.handlers:
 # Step 2: LLM Orchestration Layer (Gemini API)
 # ==========================================
 
+def clean_json_response(raw_text: str) -> str:
+    """
+    Cleans markdown backticks (```json ... ```) and filters conversational trailing/leading text
+    to extract the raw JSON string.
+    """
+    raw_text = raw_text.strip()
+    if raw_text.startswith("```"):
+        import re
+        raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+        raw_text = re.sub(r"\s*```$", "", raw_text)
+    raw_text = raw_text.strip()
+    import re
+    match = re.search(r"(\{.*\}|\[.*\])", raw_text, re.DOTALL)
+    if match:
+        raw_text = match.group(1)
+    return raw_text.strip()
+
 def generate_workout_draft(original_workout: str, state: EnvironmentState) -> WorkoutDraft:
     """
     Central reasoning coordinator. Evaluates heuristics first, then dispatches
@@ -44,7 +61,7 @@ def generate_workout_draft(original_workout: str, state: EnvironmentState) -> Wo
         return generate_fallback_draft(original_workout, original_zone, original_duration, state, heuristics)
 
     try:
-        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        model_name = os.getenv("GEMINI_MODEL", "gemma-4-31b-it")
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
         headers = {"Content-Type": "application/json"}
         params = {"key": api_key}
@@ -120,11 +137,7 @@ Decision Directives:
             if parts:
                 raw_text = parts[0].get("text", "")
                 logger.info("Successfully fetched Gemini response.")
-                raw_text = raw_text.strip()
-                if raw_text.startswith("```"):
-                    import re
-                    raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-                    raw_text = re.sub(r"\s*```$", "", raw_text)
+                raw_text = clean_json_response(raw_text)
                 draft_dict = json.loads(raw_text)
                 return WorkoutDraft(**draft_dict)
 
@@ -191,7 +204,7 @@ def regenerate_with_feedback(
         return fallback
 
     try:
-        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        model_name = os.getenv("GEMINI_MODEL", "gemma-4-31b-it")
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
         headers = {"Content-Type": "application/json"}
         params = {"key": api_key}
@@ -274,11 +287,7 @@ Safety Guidelines:
             if parts:
                 raw_text = parts[0].get("text", "")
                 logger.info("Successfully fetched feedback-adjusted Gemini response.")
-                raw_text = raw_text.strip()
-                if raw_text.startswith("```"):
-                    import re
-                    raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-                    raw_text = re.sub(r"\s*```$", "", raw_text)
+                raw_text = clean_json_response(raw_text)
                 draft_dict = json.loads(raw_text)
                 draft = WorkoutDraft(**draft_dict)
                 # Enforce strict safety boundary check
@@ -310,7 +319,7 @@ def generate_weekly_schedule_draft(settings: UserSettings, state: EnvironmentSta
         return generate_fallback_weekly_schedule(settings, state, heuristics)
 
     try:
-        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        model_name = os.getenv("GEMINI_MODEL", "gemma-4-31b-it")
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
         headers = {"Content-Type": "application/json"}
         params = {"key": api_key}
@@ -423,11 +432,7 @@ Training Philosophy rules:
             if parts:
                 raw_text = parts[0].get("text", "")
                 logger.info("Successfully fetched Gemini response.")
-                raw_text = raw_text.strip()
-                if raw_text.startswith("```"):
-                    import re
-                    raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-                    raw_text = re.sub(r"\s*```$", "", raw_text)
+                raw_text = clean_json_response(raw_text)
                 draft_dict = json.loads(raw_text)
                 return WeeklyScheduleDraft(**draft_dict)
 
@@ -478,7 +483,7 @@ def regenerate_weekly_schedule_with_feedback(
         return generate_fallback_weekly_schedule_with_feedback(settings, state, heuristics, user_feedback, draft_1)
 
     try:
-        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        model_name = os.getenv("GEMINI_MODEL", "gemma-4-31b-it")
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
         headers = {"Content-Type": "application/json"}
         params = {"key": api_key}
@@ -631,11 +636,7 @@ Adaptation instructions:
             if parts:
                 raw_text = parts[0].get("text", "")
                 logger.info("Successfully fetched feedback-adjusted Gemini response.")
-                raw_text = raw_text.strip()
-                if raw_text.startswith("```"):
-                    import re
-                    raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-                    raw_text = re.sub(r"\s*```$", "", raw_text)
+                raw_text = clean_json_response(raw_text)
                 draft_dict = json.loads(raw_text)
                 draft = WeeklyScheduleDraft(**draft_dict)
                 for day_key, cap in safety_caps.items():

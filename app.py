@@ -20,8 +20,8 @@ from core.engine import generate_weekly_schedule_draft, regenerate_weekly_schedu
 from core.parser import parse_day_offset
 from core.execution import execute_final_action
 
-# Predefined Global City Database (50 Cities)
-city_db = {
+# 1. Predefined Global City Database (15 Cities)
+CITY_DB = {
     "Seoul": (37.5665, 126.9780),
     "Tokyo": (35.6762, 139.6503),
     "Jakarta": (-6.2088, 106.8456),
@@ -36,46 +36,10 @@ city_db = {
     "Chicago": (41.8781, -87.6298),
     "Los Angeles": (34.0522, -118.2437),
     "San Francisco": (37.7749, -122.4194),
-    "Seattle": (47.6062, -122.3321),
-    "Vancouver": (49.2827, -123.1207),
-    "Toronto": (43.6532, -79.3832),
-    "Montreal": (45.5017, -73.5673),
-    "Mexico City": (19.4326, -99.1332),
-    "São Paulo": (-23.5505, -46.6333),
-    "Buenos Aires": (-34.6037, -58.3816),
-    "Cape Town": (-33.9249, 18.4241),
-    "Cairo": (30.0444, 31.2357),
-    "Nairobi": (-1.2921, 36.8219),
-    "Dubai": (25.2048, 55.2708),
-    "Mumbai": (19.0760, 72.8777),
-    "New Delhi": (28.6139, 77.2090),
-    "Bangkok": (13.7563, 100.5018),
-    "Kuala Lumpur": (3.1390, 101.6869),
-    "Manila": (14.5995, 120.9842),
-    "Hong Kong": (22.3193, 114.1694),
-    "Taipei": (25.0330, 121.5654),
-    "Melbourne": (-37.8136, 144.9631),
-    "Auckland": (-36.8485, 174.7633),
-    "Rome": (41.9028, 12.4964),
-    "Madrid": (40.4168, -3.7038),
-    "Lisbon": (38.7223, -9.1393),
-    "Vienna": (48.2082, 16.3738),
-    "Zurich": (47.3769, 8.5417),
-    "Geneva": (46.2044, 6.1432),
-    "Brussels": (50.8503, 4.3517),
-    "Copenhagen": (55.6761, 12.5683),
-    "Stockholm": (59.3293, 18.0686),
-    "Oslo": (59.9139, 10.7522),
-    "Helsinki": (60.1699, 24.9384),
-    "Dublin": (53.3498, -6.2603),
-    "Edinburgh": (55.9533, -3.1883),
-    "Reykjavik": (64.1466, -21.9426),
-    "Munich": (48.1351, 11.5820),
-    "Frankfurt": (50.1109, 8.6821)
+    "Seattle": (47.6062, -122.3321)
 }
 
-
-# Set page configs
+# 2. Configure wide page config
 st.set_page_config(page_title="PacePilot Dashboard", layout="wide", page_icon="🏃‍♂️")
 
 # Custom Styles for premium aesthetics
@@ -172,7 +136,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Sidebar configuration
+# 3. Sidebar setup containing configs and overrides
 st.sidebar.header("👤 Athlete Settings")
 
 distance_goal = st.sidebar.selectbox(
@@ -189,10 +153,16 @@ target_weekly_mileage = st.sidebar.slider(
     step=1.0
 )
 
+# Manual Health Override Panel inside Sidebar
+st.sidebar.write("---")
+st.sidebar.subheader("🛠️ Ingestion Manual Overrides")
+manual_sleep = st.sidebar.slider("Override: Sleep Score", min_value=0, max_value=100, value=75)
+manual_hrv = st.sidebar.selectbox("Override: HRV Status", options=["BALANCED", "LOW", "UNBALANCED"], index=0)
+
 # Advanced Configuration
 with st.sidebar.expander("⚙️ Advanced Coordinates & Credentials"):
-    selected_city = st.selectbox("Select Target Training Location Location:", options=list(city_db.keys()), index=0)
-    lat, lon = city_db[selected_city]
+    selected_city = st.selectbox("Select Target Training Location Location:", options=list(CITY_DB.keys()), index=0)
+    lat, lon = CITY_DB[selected_city]
     st.write(f"📍 Coordinates: **{lat:.4f}, {lon:.4f}**")
     
     st.write("---")
@@ -215,17 +185,17 @@ with st.sidebar.expander("⚙️ Advanced Coordinates & Credentials"):
 
 # Check status of configuration
 if not os.getenv("GARMIN_EMAIL") or not os.getenv("GARMIN_PASSWORD"):
-    st.sidebar.warning("⚠️ No Garmin credentials set. Pipeline will fall back to local offline biometric metrics.")
+    st.sidebar.warning("⚠️ No Garmin credentials set. Pipeline will fall back to local offline override metrics.")
 if not os.getenv("GEMINI_API_KEY"):
     st.sidebar.warning("⚠️ No Gemini API key set. Pipeline will fall back to local offline reasoning models.")
 
-# Initialize session state variables
-if "state" not in st.session_state:
-    st.session_state["state"] = None
-if "draft_1" not in st.session_state:
-    st.session_state["draft_1"] = None
-if "draft_2" not in st.session_state:
-    st.session_state["draft_2"] = None
+# Initialize session state variables defensively to guard network calls
+if "state_obj" not in st.session_state:
+    st.session_state["state_obj"] = None
+if "weekly_draft_1" not in st.session_state:
+    st.session_state["weekly_draft_1"] = None
+if "weekly_draft_2" not in st.session_state:
+    st.session_state["weekly_draft_2"] = None
 if "selected_draft_key" not in st.session_state:
     st.session_state["selected_draft_key"] = "Draft 1"
 
@@ -234,14 +204,6 @@ if "selected_draft_key" not in st.session_state:
 # ----------------------------------------------------
 st.header("⚡ Phase 1: Multi-Source Data Ingestion")
 with st.container():
-    st.write("### 🛠️ Ingestion Manual Overrides & Fallback Options")
-    override_col1, override_col2 = st.columns(2)
-    with override_col1:
-        manual_sleep = st.slider("Manual Override: Sleep Score", min_value=0, max_value=100, value=75)
-    with override_col2:
-        manual_hrv = st.selectbox("Manual Override: HRV Status", options=["BALANCED", "LOW", "UNBALANCED"], index=0)
-
-    st.write("")
     col1, col2 = st.columns([1, 4])
     with col1:
         ingest_btn = st.button("🔄 Ingest Current Context", use_container_width=True)
@@ -252,24 +214,24 @@ with st.container():
         with st.spinner("Ingesting biometrics (Garmin) and climate data (Open-Meteo)..."):
             try:
                 state = fetch_daily_context(lat, lon, fallback_sleep=manual_sleep, fallback_hrv=manual_hrv)
-                st.session_state["state"] = state
-                st.session_state["draft_1"] = None  # Reset recommendation
-                st.session_state["draft_2"] = None  # Reset feedback adjustment
+                st.session_state["state_obj"] = state
+                st.session_state["weekly_draft_1"] = None  # Reset recommendation
+                st.session_state["weekly_draft_2"] = None  # Reset feedback adjustment
                 st.success("✅ Context successfully ingested!")
             except Exception as e:
                 st.error(f"❌ Ingestion Failed: {e}")
     
     # Load state.json if it exists and session_state is empty
-    if st.session_state["state"] is None and os.path.exists(state_file):
+    if st.session_state["state_obj"] is None and os.path.exists(state_file):
         try:
             with open(state_file, "r", encoding="utf-8") as f:
                 raw = json.load(f)
-            st.session_state["state"] = EnvironmentState.model_validate(raw)
+            st.session_state["state_obj"] = EnvironmentState.model_validate(raw)
         except Exception:
             pass
 
     # Display Metrics if state exists
-    state = st.session_state["state"]
+    state = st.session_state["state_obj"]
     if state:
         st.write("### Current Physiological and Environmental Context")
         mcol1, mcol2, mcol3, mcol4 = st.columns(4)
@@ -294,12 +256,12 @@ if state:
     st.header("🧠 Phase 2 & 3: Weekly Plan Generation & Reversion-Cache")
     
     # Generate Draft 1 if it doesn't exist
-    if st.session_state["draft_1"] is None:
+    if st.session_state["weekly_draft_1"] is None:
         with st.spinner("Generating initial weekly recommendations..."):
             settings = UserSettings(distance_goal=distance_goal, target_weekly_mileage=target_weekly_mileage)
             draft_1 = generate_weekly_schedule_draft(settings, state)
-            st.session_state["draft_1"] = draft_1
-            st.session_state["draft_2"] = None
+            st.session_state["weekly_draft_1"] = draft_1
+            st.session_state["weekly_draft_2"] = None
             st.session_state["selected_draft_key"] = "Draft 1"
 
     # Display plan card renderer
@@ -340,9 +302,9 @@ if state:
                         state_file,
                         settings,
                         feedback_text.strip(),
-                        st.session_state["draft_1"]
+                        st.session_state["weekly_draft_1"]
                     )
-                    st.session_state["draft_2"] = draft_2
+                    st.session_state["weekly_draft_2"] = draft_2
                     st.session_state["selected_draft_key"] = "Draft 2"
                     st.success("✅ Feedback-adjusted plan generated!")
                 except Exception as e:
@@ -351,9 +313,10 @@ if state:
             st.warning("⚠️ Please enter subjective feedback text before requesting readjustment.")
 
     # Render Plans for Comparison
-    draft_1 = st.session_state["draft_1"]
-    draft_2 = st.session_state["draft_2"]
+    draft_1 = st.session_state["weekly_draft_1"]
+    draft_2 = st.session_state["weekly_draft_2"]
 
+    # 4. Invert Presentation Loop (Draft 2 on Top)
     if draft_2:
         st.write("### ⚖️ Proposed Plan Comparison")
         with st.container():
@@ -373,7 +336,7 @@ if state:
 # ----------------------------------------------------
 # Phase 4: Execution / Authorization
 # ----------------------------------------------------
-if state and st.session_state["draft_1"]:
+if state and st.session_state["weekly_draft_1"]:
     st.write("---")
     st.header("📅 Phase 4: Temporal Window & Calendar Sync")
     
@@ -382,16 +345,35 @@ if state and st.session_state["draft_1"]:
     if is_temporal_cap:
         st.warning("⚠️ **[TEMPORAL CAP]** It is past optimal training hours. Shifting baseline options to tomorrow.")
 
-    tcol1, tcol2 = st.columns(2)
-    with tcol1:
-        window_selection = st.selectbox(
-            "Select Target Workout Window",
-            options=[
-                "Morning Window (Tomorrow at 7:00 AM) - Heat mitigation",
-                "Evening Window (Tomorrow at 6:00 PM) - Cool post-class window",
-                "Custom Time Slot (Specify Days Offset & Hour)"
-            ]
-        )
+    # 5. Wrap Phase 4 inside a standard execution_form
+    with st.form("execution_form"):
+        tcol1, tcol2 = st.columns(2)
+        with tcol1:
+            window_selection = st.selectbox(
+                "Select Target Workout Window",
+                options=[
+                    "Morning Window (Tomorrow at 7:00 AM) - Heat mitigation",
+                    "Evening Window (Tomorrow at 6:00 PM) - Cool post-class window",
+                    "Custom Time Slot (Specify Days Offset & Hour)"
+                ]
+            )
+            
+            days_offset = st.number_input("Days Offset from Today", min_value=0, value=1)
+            hour_of_day = st.slider("Hour of the Day (0-23)", min_value=0, max_value=23, value=9)
+            
+        with tcol2:
+            st.write("🚀 **Authorized Event Schedule Summary**")
+            selected_draft_choice = st.radio(
+                "👉 Select Your Verified Training Protocol to Synchronize:",
+                options=["Draft 1 (Original)", "Draft 2 (Feedback-adjusted)"] if draft_2 else ["Draft 1 (Original)"],
+                index=1 if (draft_2 and st.session_state.get("selected_draft_key") == "Draft 2") else 0
+            )
+
+        push_btn = st.form_submit_button("🟢 Authorize & Dispatch To Google Calendar API", use_container_width=True)
+    
+    if push_btn:
+        selected_draft_key = "Draft 2" if "Draft 2" in selected_draft_choice else "Draft 1"
+        st.session_state["selected_draft_key"] = selected_draft_key
         
         # Calculate base_time
         if "Morning Window" in window_selection:
@@ -401,45 +383,12 @@ if state and st.session_state["draft_1"]:
             tomorrow = now + datetime.timedelta(days=1)
             base_time = tomorrow.replace(hour=18, minute=0, second=0, microsecond=0)
         else:
-            days_offset = st.number_input("Days Offset from Today", min_value=0, value=1)
-            hour_of_day = st.slider("Hour of the Day (0-23)", min_value=0, max_value=23, value=9)
             target_date = now + datetime.timedelta(days=days_offset)
             base_time = target_date.replace(hour=hour_of_day, minute=0, second=0, microsecond=0)
             
-        st.write(f"📅 **Selected Week Start Date (Base):** {base_time.strftime('%Y-%m-%d %I:%M %p %Z')}")
-
-    with tcol2:
-        st.write("🚀 **Authorized Event Schedule Summary**")
-        active_draft = st.session_state["draft_2"] if st.session_state["selected_draft_key"] == "Draft 2" else st.session_state["draft_1"]
-        
-        # Display chronological order list of dates
-        for workout in active_draft.schedule:
-            day_key = workout.session_slot
-            offset = parse_day_offset(day_key)
-            w_date = base_time + datetime.timedelta(days=offset)
-            if "(AM)" in day_key:
-                w_date = w_date.replace(hour=8, minute=0, second=0, microsecond=0)
-            elif "(PM)" in day_key:
-                w_date = w_date.replace(hour=18, minute=0, second=0, microsecond=0)
-            st.write(f"- **{w_date.strftime('%a, %b %d')}** | {workout.adjusted_workout} ({workout.duration_minutes}m, Z{workout.target_zone})")
-
-    # Authorize Form
-    st.write("")
-    with st.form("authorization_form"):
-        selected_draft_choice = st.radio(
-            "👉 Select Your Verified Training Protocol to Synchronize:",
-            options=["Draft 1 (Original)", "Draft 2 (Feedback-adjusted)"] if draft_2 else ["Draft 1 (Original)"],
-            index=1 if (draft_2 and st.session_state.get("selected_draft_key") == "Draft 2") else 0
-        )
-        push_btn = st.form_submit_button("🟢 Authorize & Push Weekly Training to Google Calendar", use_container_width=True)
-    
-    if push_btn:
-        selected_draft_key = "Draft 2" if "Draft 2" in selected_draft_choice else "Draft 1"
-        st.session_state["selected_draft_key"] = selected_draft_key
-        
         with st.spinner("Pushing weekly schedule to local .ics file and Google Calendar..."):
             try:
-                active_draft = st.session_state["draft_2"] if selected_draft_key == "Draft 2" else st.session_state["draft_1"]
+                active_draft = st.session_state["weekly_draft_2"] if selected_draft_key == "Draft 2" else st.session_state["weekly_draft_1"]
                 final_weekly_draft = active_draft.model_copy(deep=True)
                 
                 # Assign dates

@@ -120,6 +120,11 @@ Decision Directives:
             if parts:
                 raw_text = parts[0].get("text", "")
                 logger.info("Successfully fetched Gemini response.")
+                raw_text = raw_text.strip()
+                if raw_text.startswith("```"):
+                    import re
+                    raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+                    raw_text = re.sub(r"\s*```$", "", raw_text)
                 draft_dict = json.loads(raw_text)
                 return WorkoutDraft(**draft_dict)
 
@@ -269,6 +274,11 @@ Safety Guidelines:
             if parts:
                 raw_text = parts[0].get("text", "")
                 logger.info("Successfully fetched feedback-adjusted Gemini response.")
+                raw_text = raw_text.strip()
+                if raw_text.startswith("```"):
+                    import re
+                    raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+                    raw_text = re.sub(r"\s*```$", "", raw_text)
                 draft_dict = json.loads(raw_text)
                 draft = WorkoutDraft(**draft_dict)
                 # Enforce strict safety boundary check
@@ -413,6 +423,11 @@ Training Philosophy rules:
             if parts:
                 raw_text = parts[0].get("text", "")
                 logger.info("Successfully fetched Gemini response.")
+                raw_text = raw_text.strip()
+                if raw_text.startswith("```"):
+                    import re
+                    raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+                    raw_text = re.sub(r"\s*```$", "", raw_text)
                 draft_dict = json.loads(raw_text)
                 return WeeklyScheduleDraft(**draft_dict)
 
@@ -616,6 +631,11 @@ Adaptation instructions:
             if parts:
                 raw_text = parts[0].get("text", "")
                 logger.info("Successfully fetched feedback-adjusted Gemini response.")
+                raw_text = raw_text.strip()
+                if raw_text.startswith("```"):
+                    import re
+                    raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+                    raw_text = re.sub(r"\s*```$", "", raw_text)
                 draft_dict = json.loads(raw_text)
                 draft = WeeklyScheduleDraft(**draft_dict)
                 for day_key, cap in safety_caps.items():

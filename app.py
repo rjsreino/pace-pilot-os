@@ -17,6 +17,7 @@ load_dotenv(os.path.join(root_dir, '.env'))
 from core.ingestion import fetch_daily_context, EnvironmentState
 from core.models import UserSettings, WeeklyScheduleDraft, WorkoutDraft
 from core.engine import generate_weekly_schedule_draft, regenerate_weekly_schedule_with_feedback
+from core.parser import parse_day_offset
 from core.execution import execute_final_action
 
 
@@ -94,6 +95,17 @@ st.markdown("""
         font-size: 0.92em;
         color: #cbd5e1;
         line-height: 1.5;
+    }
+    /* Enlarge Streamlit Radio and Selection Component Font Sizes */
+    .stRadio [data-testid="stMarkdownContainer"] p {
+        font-size: 20px !important;
+        font-weight: 600 !important;
+    }
+    /* Add high-visibility highlight padding to the authorization box */
+    div[data-testid="stForm"] {
+        border: 2px solid #ff4b4b !important;
+        padding: 20px !important;
+        border-radius: 10px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -229,18 +241,21 @@ if state:
 
     # Display plan card renderer
     def render_schedule_cards(draft: WeeklyScheduleDraft):
-        card_cols = st.columns(3)
-        for idx, (day_key, workout) in enumerate(draft.schedule.items()):
-            with card_cols[idx % 3]:
-                st.markdown(f"""
-                <div class="workout-card">
-                    <div class="card-title">{day_key}</div>
-                    <div class="card-meta"><b>Target:</b> {workout.adjusted_workout} <br><b>Zone:</b> {workout.target_zone} | <b>Duration:</b> {workout.duration_minutes} mins</div>
-                    <div class="card-focus">🔬 Focus: {workout.physiological_focus}</div>
-                    <div class="card-rationale"><b>Rationale:</b> {workout.rationale}</div>
-                    <p style='font-size:0.82em; color:#64748b; margin-top:14px; border-top:1px solid rgba(255,255,255,0.06); padding-top:10px;'>Original Plan: {workout.original_workout}</p>
-                </div>
-                """, unsafe_allow_html=True)
+        num_sessions = len(draft.schedule)
+        if num_sessions > 0:
+            card_cols = st.columns(num_sessions)
+            for idx, workout in enumerate(draft.schedule):
+                day_key = workout.session_slot
+                with card_cols[idx]:
+                    st.markdown(f"""
+                    <div class="workout-card">
+                        <div class="card-title">{day_key}</div>
+                        <div class="card-meta"><b>Target:</b> {workout.adjusted_workout} <br><b>Zone:</b> {workout.target_zone} | <b>Duration:</b> {workout.duration_minutes} mins</div>
+                        <div class="card-focus">🔬 Focus: {workout.physiological_focus}</div>
+                        <div class="card-rationale"><b>Rationale:</b> {workout.rationale}</div>
+                        <p style='font-size:0.82em; color:#64748b; margin-top:14px; border-top:1px solid rgba(255,255,255,0.06); padding-top:10px;'>Original Plan: {workout.original_workout}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
 
     # Subjective Feedback Loop Panel
     st.write("### 🔁 Re-evaluate with Subjective Feedback")
@@ -277,26 +292,20 @@ if state:
     draft_2 = st.session_state["draft_2"]
 
     if draft_2:
-        st.write("### ⚖️ Side-by-Side Plan Comparison")
-        comp_col1, comp_col2 = st.columns(2)
-        with comp_col1:
+        st.write("### ⚖️ Proposed Plan Comparison")
+        with st.container():
             st.write("#### 📋 Draft 1: Initial Recommendation")
             render_schedule_cards(draft_1)
-        with comp_col2:
+            
+        st.divider()
+        
+        with st.container():
             st.write("#### 📋 Draft 2: Feedback-Adjusted Plan")
             render_schedule_cards(draft_2)
-            
-        # Select box to pick which draft to schedule
-        selected_draft_choice = st.radio(
-            "Which training plan would you like to authorize and push?",
-            options=["Draft 1 (Original)", "Draft 2 (Feedback-adjusted)"],
-            index=1
-        )
-        st.session_state["selected_draft_key"] = "Draft 2" if "Draft 2" in selected_draft_choice else "Draft 1"
     else:
         st.write("### 📋 Current Recommended Plan")
-        render_schedule_cards(draft_1)
-        st.session_state["selected_draft_key"] = "Draft 1"
+        with st.container():
+            render_schedule_cards(draft_1)
 
 # ----------------------------------------------------
 # Phase 4: Execution / Authorization
@@ -341,39 +350,45 @@ if state and st.session_state["draft_1"]:
         active_draft = st.session_state["draft_2"] if st.session_state["selected_draft_key"] == "Draft 2" else st.session_state["draft_1"]
         
         # Display chronological order list of dates
-        for day_key, workout in active_draft.schedule.items():
-            if "Day 1" in day_key:
-                offset = 1
-            elif "Day 3" in day_key:
-                offset = 3
-            elif "Day 6" in day_key:
-                offset = 6
-            else:
-                offset = 0
+        for workout in active_draft.schedule:
+            day_key = workout.session_slot
+            offset = parse_day_offset(day_key)
             w_date = base_time + datetime.timedelta(days=offset)
+            if "(AM)" in day_key:
+                w_date = w_date.replace(hour=8, minute=0, second=0, microsecond=0)
+            elif "(PM)" in day_key:
+                w_date = w_date.replace(hour=18, minute=0, second=0, microsecond=0)
             st.write(f"- **{w_date.strftime('%a, %b %d')}** | {workout.adjusted_workout} ({workout.duration_minutes}m, Z{workout.target_zone})")
 
-    # Authorize Button
+    # Authorize Form
     st.write("")
-    push_btn = st.button("🟢 Authorize & Push Weekly Training to Google Calendar", use_container_width=True, type="primary")
+    with st.form("authorization_form"):
+        selected_draft_choice = st.radio(
+            "👉 Select Your Verified Training Protocol to Synchronize:",
+            options=["Draft 1 (Original)", "Draft 2 (Feedback-adjusted)"] if draft_2 else ["Draft 1 (Original)"],
+            index=1 if (draft_2 and st.session_state.get("selected_draft_key") == "Draft 2") else 0
+        )
+        push_btn = st.form_submit_button("🟢 Authorize & Push Weekly Training to Google Calendar", use_container_width=True)
     
     if push_btn:
+        selected_draft_key = "Draft 2" if "Draft 2" in selected_draft_choice else "Draft 1"
+        st.session_state["selected_draft_key"] = selected_draft_key
+        
         with st.spinner("Pushing weekly schedule to local .ics file and Google Calendar..."):
             try:
-                active_draft = st.session_state["draft_2"] if st.session_state["selected_draft_key"] == "Draft 2" else st.session_state["draft_1"]
+                active_draft = st.session_state["draft_2"] if selected_draft_key == "Draft 2" else st.session_state["draft_1"]
                 final_weekly_draft = active_draft.model_copy(deep=True)
                 
                 # Assign dates
-                for day_key, workout in final_weekly_draft.schedule.items():
-                    if "Day 1" in day_key:
-                        offset = 1
-                    elif "Day 3" in day_key:
-                        offset = 3
-                    elif "Day 6" in day_key:
-                        offset = 6
-                    else:
-                        offset = 0
-                    workout.scheduled_start_iso = (base_time + datetime.timedelta(days=offset)).isoformat()
+                for workout in final_weekly_draft.schedule:
+                    day_key = workout.session_slot
+                    offset = parse_day_offset(day_key)
+                    w_date = base_time + datetime.timedelta(days=offset)
+                    if "(AM)" in day_key:
+                        w_date = w_date.replace(hour=8, minute=0, second=0, microsecond=0)
+                    elif "(PM)" in day_key:
+                        w_date = w_date.replace(hour=18, minute=0, second=0, microsecond=0)
+                    workout.scheduled_start_iso = w_date.isoformat()
                 
                 # Execute action
                 success = execute_final_action(final_weekly_draft)

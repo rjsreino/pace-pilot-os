@@ -8,6 +8,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from core.models import WorkoutDraft, WeeklyScheduleDraft
+from core.parser import parse_day_offset
 
 # Set up logging
 logger = logging.getLogger("PacePilot.Execution")
@@ -24,7 +25,9 @@ def execute_final_action(draft: WeeklyScheduleDraft | WorkoutDraft) -> bool:
     2. Batch inserts events to Google Calendar.
     """
     if isinstance(draft, WorkoutDraft):
-        draft = WeeklyScheduleDraft(schedule={"Workout": draft})
+        if not draft.session_slot:
+            draft.session_slot = "Workout"
+        draft = WeeklyScheduleDraft(schedule=[draft])
         
     logger.info("Executing final actions for weekly schedule")
     root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -42,19 +45,17 @@ def execute_final_action(draft: WeeklyScheduleDraft | WorkoutDraft) -> bool:
             "PRODID:-//PacePilot//Running Coach//EN"
         ]
         
-        for day_key, workout in draft.schedule.items():
+        for workout in draft.schedule:
+            day_key = workout.session_slot
             if workout.scheduled_start_iso:
                 start_time = datetime.datetime.fromisoformat(workout.scheduled_start_iso)
             else:
-                if "Day 1" in day_key:
-                    offset = 1
-                elif "Day 3" in day_key:
-                    offset = 3
-                elif "Day 6" in day_key:
-                    offset = 6
-                else:
-                    offset = 0
+                offset = parse_day_offset(day_key)
                 start_time = now + datetime.timedelta(days=offset)
+                if "(AM)" in day_key:
+                    start_time = start_time.replace(hour=8, minute=0, second=0, microsecond=0)
+                elif "(PM)" in day_key:
+                    start_time = start_time.replace(hour=18, minute=0, second=0, microsecond=0)
                 
             start_utc = start_time.astimezone(datetime.timezone.utc)
             dtstart = start_utc.strftime("%Y%m%dT%H%M%SZ")
@@ -129,19 +130,17 @@ def execute_final_action(draft: WeeklyScheduleDraft | WorkoutDraft) -> bool:
         service = build("calendar", "v3", credentials=creds)
         logger.info(f"Google Calendar service authenticated successfully for Calendar ID: {calendar_id}")
         
-        for day_key, workout in draft.schedule.items():
+        for workout in draft.schedule:
+            day_key = workout.session_slot
             if workout.scheduled_start_iso:
                 start_time = datetime.datetime.fromisoformat(workout.scheduled_start_iso)
             else:
-                if "Day 1" in day_key:
-                    offset = 1
-                elif "Day 3" in day_key:
-                    offset = 3
-                elif "Day 6" in day_key:
-                    offset = 6
-                else:
-                    offset = 0
+                offset = parse_day_offset(day_key)
                 start_time = now + datetime.timedelta(days=offset)
+                if "(AM)" in day_key:
+                    start_time = start_time.replace(hour=8, minute=0, second=0, microsecond=0)
+                elif "(PM)" in day_key:
+                    start_time = start_time.replace(hour=18, minute=0, second=0, microsecond=0)
                 
             start_utc = start_time.astimezone(datetime.timezone.utc)
             end_utc = start_utc + datetime.timedelta(minutes=workout.duration_minutes)

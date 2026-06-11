@@ -183,6 +183,73 @@ def generate_fallback_with_feedback(
     )
 
 
+def determine_weekly_frequency_and_slots(mileage: float) -> tuple[int, list[str]]:
+    """
+    Enforces frequency map thresholds based on weekly mileage.
+    Returns (frequency, slots).
+    """
+    if mileage < 45.0:
+        return 3, ["Day 1: Speed", "Day 3: Easy", "Day 6: Long"]
+    elif mileage < 65.0:
+        return 4, ["Day 1: Speed", "Day 3: Easy", "Day 4: Recovery", "Day 6: Long"]
+    elif mileage < 85.0:
+        return 5, ["Day 1: Speed", "Day 2: Easy", "Day 4: Mid-Week Long", "Day 5: Recovery", "Day 7: Long"]
+    elif mileage < 110.0:
+        return 6, ["Day 1: Interval", "Day 2: Easy", "Day 3: Tempo", "Day 5: Recovery", "Day 6: Easy", "Day 7: Long"]
+    else:
+        return 7, ["Day 1: Intervals", "Day 3: Easy", "Day 4 (AM): Recovery Flush", "Day 4 (PM): Tempo", "Day 5: Easy", "Day 6: Recovery", "Day 7: Macro Long Run"]
+
+
+def get_slot_parameters(goal: str, slot: str) -> tuple[float, int, str]:
+    """
+    Returns (proportional_percentage, target_zone, base_workout_name) for a slot.
+    """
+    # 3-session slots
+    if slot == "Day 1: Speed":
+        return 0.20, (5 if goal in ["5K", "10K"] else 3), ("VO2 Max Intervals" if goal in ["5K", "10K"] else "Threshold Tempo Run")
+    elif slot == "Day 3: Easy":
+        return 0.35, 2, "Easy Recovery Run"
+    elif slot == "Day 6: Long":
+        return 0.45, (3 if goal in ["5K", "10K"] else 2), ("Fartlek Run" if goal in ["5K", "10K"] else "Aerobic Base Run")
+        
+    # 4-session slots
+    elif slot == "Day 4: Recovery":
+        return 0.20, 1, "Active Recovery Walk"
+        
+    # 5-session slots
+    elif slot == "Day 2: Easy":
+        return 0.20, 2, "Easy Base Run"
+    elif slot == "Day 4: Mid-Week Long":
+        return 0.25, 2, "Moderate Aerobic Run"
+    elif slot == "Day 5: Recovery":
+        return 0.15, 1, "Active Recovery Walk"
+    elif slot == "Day 7: Long":
+        return 0.25, (3 if goal in ["5K", "10K"] else 2), ("Fartlek Run" if goal in ["5K", "10K"] else "Aerobic Base Run")
+        
+    # 6-session slots
+    elif slot == "Day 1: Interval":
+        return 0.15, 5, "High Intensity Intervals"
+    elif slot == "Day 3: Tempo":
+        return 0.15, 3, "Steady State Tempo"
+    elif slot == "Day 6: Easy":
+        return 0.15, 2, "Aerobic Base Run"
+        
+    # 7-session slots
+    elif slot == "Day 1: Intervals":
+        return 0.12, 5, "VO2 Max Intervals"
+    elif slot == "Day 3: Easy":
+        return 0.13, 2, "Aerobic Base Run"
+    elif slot == "Day 4 (AM): Recovery Flush":
+        return 0.10, 1, "Active Recovery Walk"
+    elif slot == "Day 4 (PM): Tempo":
+        return 0.15, 3, "Lactate Threshold Tempo"
+    elif slot == "Day 5: Easy":
+        return 0.12, 2, "Easy Base Run"
+    elif slot == "Day 6: Recovery":
+        return 0.13, 1, "Active Recovery Run"
+    return 0.20, 2, "Aerobic Run"
+
+
 def generate_fallback_weekly_schedule(
     settings: UserSettings,
     state: EnvironmentState,
@@ -198,19 +265,16 @@ def generate_fallback_weekly_schedule(
     pace_multiplier = 6.0 if goal in ["5K", "10K"] else 6.5
     total_duration = mileage * pace_multiplier
     
-    # Original split percentages: Day 1 (20%), Day 3 (35%), Day 6 (45%)
-    splits = {
-        "Day 1: Speed Session": (0.20, 5 if goal in ["5K", "10K"] else 3, "VO2 Max Intervals" if goal in ["5K", "10K"] else "Threshold Tempo Run"),
-        "Day 3: Easy Run": (0.35, 2, "Easy Recovery Run"),
-        "Day 6: Long Run": (0.45, 3 if goal in ["5K", "10K"] else 2, "Fartlek Run" if goal in ["5K", "10K"] else "Aerobic Base Run")
-    }
+    # Determine slots dynamically
+    freq, slots = determine_weekly_frequency_and_slots(mileage)
     
-    schedule = {}
+    schedule = []
     temp = state.weather.temperature_c
     sleep = state.biometric.sleep_score
     hrv = state.biometric.hrv_status
     
-    for day_key, (pct, orig_zone, base_name) in splits.items():
+    for day_key in slots:
+        pct, orig_zone, base_name = get_slot_parameters(goal, day_key)
         orig_duration = int(round(total_duration * pct))
         original_workout = f"{orig_duration}-minute {base_name}"
         
@@ -220,13 +284,13 @@ def generate_fallback_weekly_schedule(
             adjusted_zone = 1
             rationale = (
                 f"Compounding safety lockout active due to critical recovery (HRV: {hrv}, Sleep: {sleep}/100) "
-                f"and high heat ({temp}°C). High-intensity training presents acute dehydration and overreaching risks. "
+                f"and high heat ({temp}°C). High-intensity training today presents acute dehydration and overreaching risks. "
                 f"Entire weekly block down-regulated to active recovery walks."
             )
             phys_focus = "Cardiovascular strain & acute thermal stress protection"
         elif heuristics["bio_warning"]:
-            # cap to Zone 2 or Zone 1 (if speed)
-            if "Speed" in day_key:
+            # cap to Zone 2 or Zone 1 (if speed/intervals/tempo)
+            if any(term in day_key for term in ["Speed", "Interval", "Tempo"]):
                 adjusted_zone = 1
                 adjusted_workout = "Active Recovery Walk (Cap Zone 1)"
             else:
@@ -260,14 +324,15 @@ def generate_fallback_weekly_schedule(
             )
             phys_focus = "Aerobic base development & autonomic stability validation"
             
-        schedule[day_key] = WorkoutDraft(
+        schedule.append(WorkoutDraft(
             original_workout=original_workout,
             adjusted_workout=adjusted_workout,
             target_zone=adjusted_zone,
             duration_minutes=adjusted_duration,
             rationale=rationale,
-            physiological_focus=phys_focus
-        )
+            physiological_focus=phys_focus,
+            session_slot=day_key
+        ))
         
     return WeeklyScheduleDraft(schedule=schedule)
 
@@ -293,16 +358,13 @@ def generate_fallback_weekly_schedule_with_feedback(
     pace_multiplier = 6.0 if goal in ["5K", "10K"] else 6.5
     total_duration = mileage * pace_multiplier
     
-    # Original splits
-    splits = {
-        "Day 1: Speed Session": (0.20, 5 if goal in ["5K", "10K"] else 3, "VO2 Max Intervals" if goal in ["5K", "10K"] else "Threshold Tempo Run"),
-        "Day 3: Easy Run": (0.35, 2, "Easy Recovery Run"),
-        "Day 6: Long Run": (0.45, 3 if goal in ["5K", "10K"] else 2, "Fartlek Run" if goal in ["5K", "10K"] else "Aerobic Base Run")
-    }
+    # Determine slots dynamically
+    freq, slots = determine_weekly_frequency_and_slots(mileage)
     
-    schedule = {}
+    schedule = []
     
-    for day_key, (pct, orig_zone, base_name) in splits.items():
+    for day_key in slots:
+        pct, orig_zone, base_name = get_slot_parameters(goal, day_key)
         orig_duration = int(round(total_duration * pct))
         original_workout = f"{orig_duration}-minute {base_name}"
         
@@ -312,7 +374,7 @@ def generate_fallback_weekly_schedule_with_feedback(
             max_zone = 1
         elif heuristics["bio_warning"]:
             max_duration = int(round(orig_duration * 0.6))
-            max_zone = 1 if "Speed" in day_key else 2
+            max_zone = 1 if any(term in day_key for term in ["Speed", "Interval", "Tempo"]) else 2
         elif heuristics["temp_warning"]:
             max_duration = int(round(orig_duration * 0.8))
             max_zone = orig_zone
@@ -320,10 +382,26 @@ def generate_fallback_weekly_schedule_with_feedback(
             max_duration = orig_duration
             max_zone = orig_zone
             
-        d1_workout = draft_1.schedule[day_key]
+        # Find in draft_1
+        d1_workout = None
+        for w in draft_1.schedule:
+            if w.session_slot == day_key:
+                d1_workout = w
+                break
+        
+        if d1_workout is None:
+            # Stage temporary workout
+            d1_workout = WorkoutDraft(
+                original_workout=original_workout,
+                adjusted_workout=original_workout,
+                target_zone=orig_zone,
+                duration_minutes=orig_duration,
+                rationale="Staged new session slot.",
+                physiological_focus="Aerobic base development & autonomic stability validation",
+                session_slot=day_key
+            )
         
         if sentiment == "high_energy":
-            # Scale up to safety bounds
             target_zone = max_zone
             duration_minutes = max_duration
             adjusted_workout = d1_workout.adjusted_workout
@@ -351,7 +429,6 @@ def generate_fallback_weekly_schedule_with_feedback(
             )
             phys_focus = "Parasympathetic depression & injury prevention safety cap"
         else:
-            # Scale down from Draft 1
             target_zone = max(1, d1_workout.target_zone - 1)
             duration_minutes = int(round(d1_workout.duration_minutes * 0.8))
             adjusted_workout = f"Reduced Intensity {d1_workout.adjusted_workout}"
@@ -361,18 +438,19 @@ def generate_fallback_weekly_schedule_with_feedback(
             )
             phys_focus = d1_workout.physiological_focus
             
-        # Ensure it doesn't exceed safety bounds
         target_zone = min(max_zone, target_zone)
         duration_minutes = min(max_duration, duration_minutes)
         
-        schedule[day_key] = WorkoutDraft(
+        schedule.append(WorkoutDraft(
             original_workout=original_workout,
             adjusted_workout=adjusted_workout,
             target_zone=target_zone,
             duration_minutes=duration_minutes,
             rationale=rationale,
-            physiological_focus=phys_focus
-        )
+            physiological_focus=phys_focus,
+            session_slot=day_key
+        ))
         
     return WeeklyScheduleDraft(schedule=schedule)
+
 

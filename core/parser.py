@@ -63,3 +63,15 @@ def rebuild_workout_name(workout_name: str, new_duration: int, prefix: str = "")
         return f"{new_duration}-minute {prefix.strip()} {name_clean}"
     else:
         return f"{new_duration}-minute {name_clean}"
+
+
+def parse_day_offset(day_key: str) -> int:
+    """
+    Parses the day number from a key like 'Day 4 (AM): Recovery Flush' -> 4.
+    If no day number is found, defaults to 0.
+    """
+    match = re.search(r"Day\s*(\d+)", day_key, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return 0
+

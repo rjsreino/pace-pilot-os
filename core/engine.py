@@ -6,14 +6,16 @@ import requests
 
 from core.ingestion import EnvironmentState
 from core.models import WorkoutDraft, UserSettings, WeeklyScheduleDraft
-from core.parser import parse_workout_details, rebuild_workout_name
+from core.parser import parse_workout_details, rebuild_workout_name, parse_day_offset
 from core.sentiment import detect_sentiment, stem_word
 from core.heuristics import evaluate_heuristics
 from core.fallback import (
     generate_fallback_draft,
     generate_fallback_with_feedback,
     generate_fallback_weekly_schedule,
-    generate_fallback_weekly_schedule_with_feedback
+    generate_fallback_weekly_schedule_with_feedback,
+    determine_weekly_frequency_and_slots,
+    get_slot_parameters
 )
 
 
@@ -300,12 +302,23 @@ def generate_weekly_schedule_draft(settings: UserSettings, state: EnvironmentSta
         headers = {"Content-Type": "application/json"}
         params = {"key": api_key}
 
+        freq, slots = determine_weekly_frequency_and_slots(settings.target_weekly_mileage)
+        
+        slots_description = ""
+        for slot in slots:
+            pct, orig_zone, base_name = get_slot_parameters(settings.distance_goal, slot)
+            slots_description += f"- \"{slot}\": Base intensity Zone {orig_zone}, volume split {int(pct*100)}%, Base workout: {base_name}\n"
+
         prompt_text = f"""
 You are the reasoning engine of PacePilot, an agentic AI running coach.
-Your task is to analyze the athlete's race distance goal and target weekly mileage along with environmental and recovery metrics to distribute the mileage across three specialized days of the week:
-- Day 1: Speed Session (20% of volume)
-- Day 3: Easy Run (35% of volume)
-- Day 6: Long Run (45% of volume)
+Your task is to analyze the athlete's race distance goal and target weekly mileage along with environmental and recovery metrics to distribute the mileage across exactly {freq} sessions for the week.
+
+You MUST return a list of workouts under the "schedule" key in your JSON response.
+For each item in the "schedule" array, you MUST populate the "session_slot" field with one of these exact slot names in order:
+{json.dumps(slots, indent=2)}
+
+Session configuration guidelines:
+{slots_description}
 
 Athlete Ingested Parameters:
 - Distance Goal: {settings.distance_goal}
@@ -327,13 +340,10 @@ Training Philosophy rules:
 2. Half Marathon / Marathon Goals: Progressive steady-state tempo runs (Zone 3 aerobic threshold), cumulative volume handling, and long slow base runs (Zone 2 mitochondrial development).
 3. Volume constraint: Distribute target weekly mileage to durations based on a baseline pace translation (approx 6.0 min/km for 5K/10K; 6.5 min/km for HALF/MARATHON).
    Total duration minutes = target weekly mileage * pace translation.
-   Split this total duration into:
-     - Day 1: Speed Session (20%)
-     - Day 3: Easy Run (35%)
-     - Day 6: Long Run (45%)
+   For each session key, calculate the base planned duration as: total duration minutes * volume split.
 4. Safety constraints:
    - If Compounding Safety Lockout is True: You MUST set the adjusted workouts for ALL days to an Active Recovery Walk (Zone 1, 30 minutes). Rationale must explain the compounding safety lockout.
-   - If Biometric Recovery Warning is True: Cap all heart rate intensities to Zone 1 or Zone 2, and reduce the durations of all workouts by 40% (i.e. scale by 0.6). Day 1 (Speed Session) must be capped at Zone 1 (active walk).
+   - If Biometric Recovery Warning is True: Cap all heart rate intensities to Zone 1 or Zone 2, and reduce the durations of all workouts by 40% (i.e. scale by 0.6). High intensity sessions (e.g. speed/intervals/tempo) must be capped at Zone 1 (active walk).
    - If Temperature Warning is True: Scale all durations down by 20% to prevent excess heat load.
    - Keep the rationale clear, concise, and capped at a maximum of 2 to 3 sentences. Avoid verbose introductory fluff.
    - Provide a single, powerful line item (under 10 words) identifying the primary physiological factor being evaluated or protected (e.g., 'Autonomic fatigue prevention & cardiac drift mitigation') in the 'physiological_focus' field of each workout.
@@ -343,46 +353,30 @@ Training Philosophy rules:
             "type": "OBJECT",
             "properties": {
                 "schedule": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "Day 1: Speed Session": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "original_workout": {"type": "STRING"},
-                                "adjusted_workout": {"type": "STRING"},
-                                "target_zone": {"type": "INTEGER"},
-                                "duration_minutes": {"type": "INTEGER"},
-                                "rationale": {"type": "STRING"},
-                                "physiological_focus": {"type": "STRING"}
-                            },
-                            "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale", "physiological_focus"]
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "session_slot": {"type": "STRING"},
+                            "original_workout": {"type": "STRING"},
+                            "adjusted_workout": {"type": "STRING"},
+                            "target_zone": {"type": "INTEGER"},
+                            "duration_minutes": {"type": "INTEGER"},
+                            "physiological_focus": {"type": "STRING"},
+                            "rationale": {"type": "STRING"},
+                            "scheduled_start_iso": {"type": "STRING"}
                         },
-                        "Day 3: Easy Run": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "original_workout": {"type": "STRING"},
-                                "adjusted_workout": {"type": "STRING"},
-                                "target_zone": {"type": "INTEGER"},
-                                "duration_minutes": {"type": "INTEGER"},
-                                "rationale": {"type": "STRING"},
-                                "physiological_focus": {"type": "STRING"}
-                            },
-                            "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale", "physiological_focus"]
-                        },
-                        "Day 6: Long Run": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "original_workout": {"type": "STRING"},
-                                "adjusted_workout": {"type": "STRING"},
-                                "target_zone": {"type": "INTEGER"},
-                                "duration_minutes": {"type": "INTEGER"},
-                                "rationale": {"type": "STRING"},
-                                "physiological_focus": {"type": "STRING"}
-                            },
-                            "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale", "physiological_focus"]
-                        }
-                    },
-                    "required": ["Day 1: Speed Session", "Day 3: Easy Run", "Day 6: Long Run"]
+                        "required": [
+                            "session_slot",
+                            "original_workout",
+                            "adjusted_workout",
+                            "target_zone",
+                            "duration_minutes",
+                            "physiological_focus",
+                            "rationale",
+                            "scheduled_start_iso"
+                        ]
+                    }
                 }
             },
             "required": ["schedule"]
@@ -476,22 +470,18 @@ def regenerate_weekly_schedule_with_feedback(
         pace_multiplier = 6.0 if goal in ["5K", "10K"] else 6.5
         total_duration = mileage * pace_multiplier
         
-        # Original splits
-        splits = {
-            "Day 1: Speed Session": (0.20, 5 if goal in ["5K", "10K"] else 3),
-            "Day 3: Easy Run": (0.35, 2),
-            "Day 6: Long Run": (0.45, 3 if goal in ["5K", "10K"] else 2)
-        }
+        freq, slots = determine_weekly_frequency_and_slots(mileage)
         
         safety_caps = {}
-        for day_key, (pct, orig_zone) in splits.items():
+        for day_key in slots:
+            pct, orig_zone, base_name = get_slot_parameters(goal, day_key)
             orig_duration = int(round(total_duration * pct))
             if heuristics["compounding_warning"]:
                 max_duration = 30
                 max_zone = 1
             elif heuristics["bio_warning"]:
                 max_duration = int(round(orig_duration * 0.6))
-                max_zone = 1 if "Speed" in day_key else 2
+                max_zone = 1 if any(term in day_key for term in ["Speed", "Interval", "Tempo"]) else 2
             elif heuristics["temp_warning"]:
                 max_duration = int(round(orig_duration * 0.8))
                 max_zone = orig_zone
@@ -499,11 +489,24 @@ def regenerate_weekly_schedule_with_feedback(
                 max_duration = orig_duration
                 max_zone = orig_zone
             
-            d1_w = draft_1.schedule[day_key]
+            # Find in draft_1
+            d1_w = None
+            for w in draft_1.schedule:
+                if w.session_slot == day_key:
+                    d1_w = w
+                    break
+            
+            if d1_w:
+                d1_zone = d1_w.target_zone
+                d1_duration = d1_w.duration_minutes
+            else:
+                d1_zone = orig_zone
+                d1_duration = orig_duration
+                
             if is_high_energy:
                 safety_caps[day_key] = {"max_zone": max_zone, "max_duration": max_duration}
             else:
-                safety_caps[day_key] = {"max_zone": min(d1_w.target_zone, max_zone), "max_duration": min(d1_w.duration_minutes, max_duration)}
+                safety_caps[day_key] = {"max_zone": min(d1_zone, max_zone), "max_duration": min(d1_duration, max_duration)}
 
         prompt_text = f"""
 You are the reasoning engine of PacePilot, an agentic AI running coach.
@@ -521,68 +524,61 @@ Athlete Ingested Parameters:
 - Local Temperature: {state.weather.temperature_c}°C
 
 Your Initial Proposal (Draft 1):
-- Day 1: {draft_1.schedule['Day 1: Speed Session'].adjusted_workout} (Zone {draft_1.schedule['Day 1: Speed Session'].target_zone}, {draft_1.schedule['Day 1: Speed Session'].duration_minutes} min)
-- Day 3: {draft_1.schedule['Day 3: Easy Run'].adjusted_workout} (Zone {draft_1.schedule['Day 3: Easy Run'].target_zone}, {draft_1.schedule['Day 3: Easy Run'].duration_minutes} min)
-- Day 6: {draft_1.schedule['Day 6: Long Run'].adjusted_workout} (Zone {draft_1.schedule['Day 6: Long Run'].target_zone}, {draft_1.schedule['Day 6: Long Run'].duration_minutes} min)
+"""
+        for day_key in slots:
+            d1_w = None
+            for w in draft_1.schedule:
+                if w.session_slot == day_key:
+                    d1_w = w
+                    break
+            if d1_w:
+                prompt_text += f"- {day_key}: {d1_w.adjusted_workout} (Zone {d1_w.target_zone}, {d1_w.duration_minutes} min)\n"
 
-Safety Guidelines (DO NOT EXCEED):
-- Day 1 Cap: Zone {safety_caps['Day 1: Speed Session']['max_zone']}, Duration {safety_caps['Day 1: Speed Session']['max_duration']} min
-- Day 3 Cap: Zone {safety_caps['Day 3: Easy Run']['max_zone']}, Duration {safety_caps['Day 3: Easy Run']['max_duration']} min
-- Day 6 Cap: Zone {safety_caps['Day 6: Long Run']['max_zone']}, Duration {safety_caps['Day 6: Long Run']['max_duration']} min
+        prompt_text += "\nSafety Guidelines (DO NOT EXCEED):\n"
+        for day_key, cap in safety_caps.items():
+            prompt_text += f"- {day_key} Cap: Zone {cap['max_zone']}, Duration {cap['max_duration']} min\n"
 
+        prompt_text += f"""
 Adaptation instructions:
-1. You MUST NOT exceed the Maximum Safety Zone Cap or the Maximum Recommended Duration for each day.
-2. Adapt the workouts to address user feedback:
+1. You MUST return a list of workouts under the "schedule" key in your JSON response.
+2. For each item in the "schedule" array, you MUST populate the "session_slot" field with one of these exact slot names in order:
+{json.dumps(slots, indent=2)}
+3. You MUST NOT exceed the Maximum Safety Zone Cap or the Maximum Recommended Duration for each day.
+4. Adapt the workouts to address user feedback:
    - If user reports high-energy/readiness ("{user_feedback}"), you may scale the workouts UP to the maximum allowed by the safety bounds.
-   - If user reports soreness/fatigue/pain, scale all workouts DOWN or modify structure accordingly (e.g. Day 1 becomes walk, Day 3 & 6 are shortened or turned into mobility/stretching).
-3. Keep the rationales clear, concise, and capped at 2 to 3 sentences.
-4. Provide a single, powerful physiological_focus under 10 words for each workout.
+   - If user reports soreness/fatigue/pain, scale all workouts DOWN or modify structure accordingly (e.g. Speed/Intervals become walk, other days are shortened or turned into mobility/stretching).
+5. Keep the rationales clear, concise, and capped at 2 to 3 sentences.
+6. Provide a single, powerful physiological_focus under 10 words for each workout in the 'physiological_focus' field.
 """
 
         schema = {
             "type": "OBJECT",
             "properties": {
                 "schedule": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "Day 1: Speed Session": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "original_workout": {"type": "STRING"},
-                                "adjusted_workout": {"type": "STRING"},
-                                "target_zone": {"type": "INTEGER"},
-                                "duration_minutes": {"type": "INTEGER"},
-                                "rationale": {"type": "STRING"},
-                                "physiological_focus": {"type": "STRING"}
-                            },
-                            "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale", "physiological_focus"]
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "session_slot": {"type": "STRING"},
+                            "original_workout": {"type": "STRING"},
+                            "adjusted_workout": {"type": "STRING"},
+                            "target_zone": {"type": "INTEGER"},
+                            "duration_minutes": {"type": "INTEGER"},
+                            "physiological_focus": {"type": "STRING"},
+                            "rationale": {"type": "STRING"},
+                            "scheduled_start_iso": {"type": "STRING"}
                         },
-                        "Day 3: Easy Run": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "original_workout": {"type": "STRING"},
-                                "adjusted_workout": {"type": "STRING"},
-                                "target_zone": {"type": "INTEGER"},
-                                "duration_minutes": {"type": "INTEGER"},
-                                "rationale": {"type": "STRING"},
-                                "physiological_focus": {"type": "STRING"}
-                            },
-                            "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale", "physiological_focus"]
-                        },
-                        "Day 6: Long Run": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "original_workout": {"type": "STRING"},
-                                "adjusted_workout": {"type": "STRING"},
-                                "target_zone": {"type": "INTEGER"},
-                                "duration_minutes": {"type": "INTEGER"},
-                                "rationale": {"type": "STRING"},
-                                "physiological_focus": {"type": "STRING"}
-                            },
-                            "required": ["original_workout", "adjusted_workout", "target_zone", "duration_minutes", "rationale", "physiological_focus"]
-                        }
-                    },
-                    "required": ["Day 1: Speed Session", "Day 3: Easy Run", "Day 6: Long Run"]
+                        "required": [
+                            "session_slot",
+                            "original_workout",
+                            "adjusted_workout",
+                            "target_zone",
+                            "duration_minutes",
+                            "physiological_focus",
+                            "rationale",
+                            "scheduled_start_iso"
+                        ]
+                    }
                 }
             },
             "required": ["schedule"]
@@ -619,10 +615,18 @@ Adaptation instructions:
                 draft_dict = json.loads(raw_text)
                 draft = WeeklyScheduleDraft(**draft_dict)
                 for day_key, cap in safety_caps.items():
-                    w = draft.schedule[day_key]
-                    w.target_zone = min(cap["max_zone"], w.target_zone)
-                    w.duration_minutes = min(cap["max_duration"], w.duration_minutes)
+                    for w in draft.schedule:
+                        if w.session_slot == day_key:
+                            w.target_zone = min(cap["max_zone"], w.target_zone)
+                            w.duration_minutes = min(cap["max_duration"], w.duration_minutes)
+                            break
                 return draft
+
+        raise ValueError("Invalid candidates block returned by Gemini API")
+
+    except Exception as e:
+        logger.error(f"Feedback-adjusted Gemini API call failed: {e}. Falling back to offline feedback weekly generator.")
+        return generate_fallback_weekly_schedule_with_feedback(settings, state, heuristics, user_feedback, draft_1)
 
         raise ValueError("Invalid candidates block returned by Gemini API")
 

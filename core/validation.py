@@ -4,7 +4,9 @@ import logging
 import json
 import datetime
 from core.models import WorkoutDraft, UserSettings, WeeklyScheduleDraft
-from core.engine import regenerate_weekly_schedule_with_feedback, parse_workout_details
+from core.engine import regenerate_weekly_schedule_with_feedback
+from core.parser import parse_workout_details, parse_day_offset
+from core.fallback import determine_weekly_frequency_and_slots, get_slot_parameters
 
 # Set up logging
 logger = logging.getLogger("PacePilot.Validation")
@@ -49,8 +51,8 @@ def print_weekly_schedule_card(title: str, draft: WeeklyScheduleDraft):
     print(f"\n=============================================================")
     print(f"  [{title}]")
     print(f"=============================================================")
-    for day, workout in draft.schedule.items():
-        print(f"\n  * {day}:")
+    for workout in draft.schedule:
+        print(f"\n  * {workout.session_slot}:")
         print(f"    - Proposal:   {workout.adjusted_workout}")
         print(f"    - Intensity:  Zone {workout.target_zone}")
         print(f"    - Duration:   {workout.duration_minutes} minutes")
@@ -345,16 +347,15 @@ def prompt_weekly_user_validation(
             if auth_choice in ["Y", "YES"]:
                 logger.info("Initial weekly draft authorized directly by user.")
                 base_time = resolve_target_schedule_time()
-                for day_key, workout in initial_draft.schedule.items():
-                    if "Day 1" in day_key:
-                        offset = 1
-                    elif "Day 3" in day_key:
-                        offset = 3
-                    elif "Day 6" in day_key:
-                        offset = 6
-                    else:
-                        offset = 0
-                    workout.scheduled_start_iso = (base_time + datetime.timedelta(days=offset)).isoformat()
+                for workout in initial_draft.schedule:
+                    day_key = workout.session_slot
+                    offset = parse_day_offset(day_key)
+                    run_time = base_time + datetime.timedelta(days=offset)
+                    if "(AM)" in day_key:
+                        run_time = run_time.replace(hour=8, minute=0, second=0, microsecond=0)
+                    elif "(PM)" in day_key:
+                        run_time = run_time.replace(hour=18, minute=0, second=0, microsecond=0)
+                    workout.scheduled_start_iso = run_time.isoformat()
                 return initial_draft
             elif auth_choice in ["N", "NO"]:
                 logger.info("Weekly draft rejected. Opening sub-menu options...")
@@ -384,65 +385,64 @@ def prompt_weekly_user_validation(
                 pace_multiplier = 6.0 if goal in ["5K", "10K"] else 6.5
                 total_duration = mileage * pace_multiplier
                 
-                splits = {
-                    "Day 1: Speed Session": (0.20, 5 if goal in ["5K", "10K"] else 3, "VO2 Max Intervals" if goal in ["5K", "10K"] else "Threshold Tempo Run"),
-                    "Day 3: Easy Run": (0.35, 2, "Easy Recovery Run"),
-                    "Day 6: Long Run": (0.45, 3 if goal in ["5K", "10K"] else 2, "Fartlek Run" if goal in ["5K", "10K"] else "Aerobic Base Run")
-                }
+                freq, slots = determine_weekly_frequency_and_slots(mileage)
                 
-                schedule = {}
-                for day_key, (pct, orig_zone, base_name) in splits.items():
+                schedule = []
+                for day_key in slots:
+                    pct, orig_zone, base_name = get_slot_parameters(goal, day_key)
                     orig_duration = int(round(total_duration * pct))
                     original_workout = f"{orig_duration}-minute {base_name}"
-                    schedule[day_key] = WorkoutDraft(
+                    schedule.append(WorkoutDraft(
                         original_workout=original_workout,
                         adjusted_workout=original_workout,
                         target_zone=orig_zone,
                         duration_minutes=orig_duration,
                         rationale="User bypassed agent safety warnings and forced the original unadjusted training protocol.",
-                        physiological_focus="Aerobic base development & autonomic stability validation"
-                    )
+                        physiological_focus="Aerobic base development & autonomic stability validation",
+                        session_slot=day_key
+                    ))
                 forced_draft = WeeklyScheduleDraft(schedule=schedule)
                 logger.warning("User forced original unadjusted weekly protocol.")
                 
                 base_time = resolve_target_schedule_time()
-                for day_key, workout in forced_draft.schedule.items():
-                    if "Day 1" in day_key:
-                        offset = 1
-                    elif "Day 3" in day_key:
-                        offset = 3
-                    elif "Day 6" in day_key:
-                        offset = 6
-                    else:
-                        offset = 0
-                    workout.scheduled_start_iso = (base_time + datetime.timedelta(days=offset)).isoformat()
+                for workout in forced_draft.schedule:
+                    day_key = workout.session_slot
+                    offset = parse_day_offset(day_key)
+                    run_time = base_time + datetime.timedelta(days=offset)
+                    if "(AM)" in day_key:
+                        run_time = run_time.replace(hour=8, minute=0, second=0, microsecond=0)
+                    elif "(PM)" in day_key:
+                        run_time = run_time.replace(hour=18, minute=0, second=0, microsecond=0)
+                    workout.scheduled_start_iso = run_time.isoformat()
                 return forced_draft
                 
             elif sub_choice == "2":
-                schedule = {}
-                for day_key in ["Day 1: Speed Session", "Day 3: Easy Run", "Day 6: Long Run"]:
-                    schedule[day_key] = WorkoutDraft(
+                mileage = settings.target_weekly_mileage
+                freq, slots = determine_weekly_frequency_and_slots(mileage)
+                schedule = []
+                for day_key in slots:
+                    schedule.append(WorkoutDraft(
                         original_workout="Planned session",
                         adjusted_workout="Rest Day",
                         target_zone=0,
                         duration_minutes=0,
                         rationale="User requested an absolute rest week, overriding all planned exercise.",
-                        physiological_focus="Autonomic baseline assessment"
-                    )
+                        physiological_focus="Autonomic baseline assessment",
+                        session_slot=day_key
+                    ))
                 rest_draft = WeeklyScheduleDraft(schedule=schedule)
                 logger.info("Absolute rest week forced by user.")
                 
                 base_time = resolve_target_schedule_time()
-                for day_key, workout in rest_draft.schedule.items():
-                    if "Day 1" in day_key:
-                        offset = 1
-                    elif "Day 3" in day_key:
-                        offset = 3
-                    elif "Day 6" in day_key:
-                        offset = 6
-                    else:
-                        offset = 0
-                    workout.scheduled_start_iso = (base_time + datetime.timedelta(days=offset)).isoformat()
+                for workout in rest_draft.schedule:
+                    day_key = workout.session_slot
+                    offset = parse_day_offset(day_key)
+                    run_time = base_time + datetime.timedelta(days=offset)
+                    if "(AM)" in day_key:
+                        run_time = run_time.replace(hour=8, minute=0, second=0, microsecond=0)
+                    elif "(PM)" in day_key:
+                        run_time = run_time.replace(hour=18, minute=0, second=0, microsecond=0)
+                    workout.scheduled_start_iso = run_time.isoformat()
                 return rest_draft
                 
             elif sub_choice == "3":
@@ -483,55 +483,55 @@ def prompt_weekly_user_validation(
             if final_choice == "1":
                 logger.info("User approved Draft 2 (feedback-adjusted weekly).")
                 base_time = resolve_target_schedule_time()
-                for day_key, workout in draft_2.schedule.items():
-                    if "Day 1" in day_key:
-                        offset = 1
-                    elif "Day 3" in day_key:
-                        offset = 3
-                    elif "Day 6" in day_key:
-                        offset = 6
-                    else:
-                        offset = 0
-                    workout.scheduled_start_iso = (base_time + datetime.timedelta(days=offset)).isoformat()
+                for workout in draft_2.schedule:
+                    day_key = workout.session_slot
+                    offset = parse_day_offset(day_key)
+                    run_time = base_time + datetime.timedelta(days=offset)
+                    if "(AM)" in day_key:
+                        run_time = run_time.replace(hour=8, minute=0, second=0, microsecond=0)
+                    elif "(PM)" in day_key:
+                        run_time = run_time.replace(hour=18, minute=0, second=0, microsecond=0)
+                    workout.scheduled_start_iso = run_time.isoformat()
                 return draft_2
             elif final_choice == "2":
                 logger.info("User reverted to Draft 1 (original recommendation weekly).")
                 base_time = resolve_target_schedule_time()
-                for day_key, workout in initial_draft.schedule.items():
-                    if "Day 1" in day_key:
-                        offset = 1
-                    elif "Day 3" in day_key:
-                        offset = 3
-                    elif "Day 6" in day_key:
-                        offset = 6
-                    else:
-                        offset = 0
-                    workout.scheduled_start_iso = (base_time + datetime.timedelta(days=offset)).isoformat()
+                for workout in initial_draft.schedule:
+                    day_key = workout.session_slot
+                    offset = parse_day_offset(day_key)
+                    run_time = base_time + datetime.timedelta(days=offset)
+                    if "(AM)" in day_key:
+                        run_time = run_time.replace(hour=8, minute=0, second=0, microsecond=0)
+                    elif "(PM)" in day_key:
+                        run_time = run_time.replace(hour=18, minute=0, second=0, microsecond=0)
+                    workout.scheduled_start_iso = run_time.isoformat()
                 return initial_draft
             elif final_choice == "3":
-                schedule = {}
-                for day_key in ["Day 1: Speed Session", "Day 3: Easy Run", "Day 6: Long Run"]:
-                    schedule[day_key] = WorkoutDraft(
+                mileage = settings.target_weekly_mileage
+                freq, slots = determine_weekly_frequency_and_slots(mileage)
+                schedule = []
+                for day_key in slots:
+                    schedule.append(WorkoutDraft(
                         original_workout="Planned session",
                         adjusted_workout="Rest Day",
                         target_zone=0,
                         duration_minutes=0,
                         rationale="User selected Safety Override to force an absolute rest week.",
-                        physiological_focus="Autonomic baseline assessment"
-                    )
+                        physiological_focus="Autonomic baseline assessment",
+                        session_slot=day_key
+                    ))
                 rest_draft = WeeklyScheduleDraft(schedule=schedule)
                 logger.info("User forced safety override rest week.")
                 base_time = resolve_target_schedule_time()
-                for day_key, workout in rest_draft.schedule.items():
-                    if "Day 1" in day_key:
-                        offset = 1
-                    elif "Day 3" in day_key:
-                        offset = 3
-                    elif "Day 6" in day_key:
-                        offset = 6
-                    else:
-                        offset = 0
-                    workout.scheduled_start_iso = (base_time + datetime.timedelta(days=offset)).isoformat()
+                for workout in rest_draft.schedule:
+                    day_key = workout.session_slot
+                    offset = parse_day_offset(day_key)
+                    run_time = base_time + datetime.timedelta(days=offset)
+                    if "(AM)" in day_key:
+                        run_time = run_time.replace(hour=8, minute=0, second=0, microsecond=0)
+                    elif "(PM)" in day_key:
+                        run_time = run_time.replace(hour=18, minute=0, second=0, microsecond=0)
+                    workout.scheduled_start_iso = run_time.isoformat()
                 return rest_draft
             elif final_choice == "4":
                 logger.info("User cancelled validation in final matrix.")

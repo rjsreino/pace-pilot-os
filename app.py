@@ -20,6 +20,11 @@ from core.engine import generate_weekly_schedule_draft, regenerate_weekly_schedu
 from core.parser import parse_day_offset
 from core.execution import execute_final_action
 
+# Cache-clearing helper for state invalidation
+def clear_schedule_cache():
+    st.session_state.weekly_draft_1 = None
+    st.session_state.weekly_draft_2 = None
+
 # 1. Predefined Global City Database (15 Cities)
 CITY_DB = {
     "Seoul": (37.5665, 126.9780),
@@ -142,7 +147,8 @@ st.sidebar.header("👤 Athlete Settings")
 distance_goal = st.sidebar.selectbox(
     "Target Goal Distance",
     options=["5K", "10K", "HALF", "MARATHON"],
-    index=2  # default to HALF
+    index=2,  # default to HALF
+    on_change=clear_schedule_cache
 )
 
 target_weekly_mileage = st.sidebar.slider(
@@ -150,13 +156,15 @@ target_weekly_mileage = st.sidebar.slider(
     min_value=5.0,
     max_value=150.0,
     value=40.0,
-    step=1.0
+    step=1.0,
+    on_change=clear_schedule_cache
 )
 
 selected_city = st.sidebar.selectbox(
     "Select Target Training Location:",
     options=list(CITY_DB.keys()),
-    index=0
+    index=0,
+    on_change=clear_schedule_cache
 )
 lat, lon = CITY_DB[selected_city]
 

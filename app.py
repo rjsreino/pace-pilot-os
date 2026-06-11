@@ -20,6 +20,60 @@ from core.engine import generate_weekly_schedule_draft, regenerate_weekly_schedu
 from core.parser import parse_day_offset
 from core.execution import execute_final_action
 
+# Predefined Global City Database (50 Cities)
+city_db = {
+    "Seoul": (37.5665, 126.9780),
+    "Tokyo": (35.6762, 139.6503),
+    "Jakarta": (-6.2088, 106.8456),
+    "Amsterdam": (52.3676, 4.9041),
+    "London": (51.5074, -0.1278),
+    "New York": (40.7128, -74.0060),
+    "Paris": (48.8566, 2.3522),
+    "Sydney": (-33.8688, 151.2093),
+    "Singapore": (1.3521, 103.8198),
+    "Berlin": (52.5200, 13.4050),
+    "Boston": (42.3601, -71.0589),
+    "Chicago": (41.8781, -87.6298),
+    "Los Angeles": (34.0522, -118.2437),
+    "San Francisco": (37.7749, -122.4194),
+    "Seattle": (47.6062, -122.3321),
+    "Vancouver": (49.2827, -123.1207),
+    "Toronto": (43.6532, -79.3832),
+    "Montreal": (45.5017, -73.5673),
+    "Mexico City": (19.4326, -99.1332),
+    "São Paulo": (-23.5505, -46.6333),
+    "Buenos Aires": (-34.6037, -58.3816),
+    "Cape Town": (-33.9249, 18.4241),
+    "Cairo": (30.0444, 31.2357),
+    "Nairobi": (-1.2921, 36.8219),
+    "Dubai": (25.2048, 55.2708),
+    "Mumbai": (19.0760, 72.8777),
+    "New Delhi": (28.6139, 77.2090),
+    "Bangkok": (13.7563, 100.5018),
+    "Kuala Lumpur": (3.1390, 101.6869),
+    "Manila": (14.5995, 120.9842),
+    "Hong Kong": (22.3193, 114.1694),
+    "Taipei": (25.0330, 121.5654),
+    "Melbourne": (-37.8136, 144.9631),
+    "Auckland": (-36.8485, 174.7633),
+    "Rome": (41.9028, 12.4964),
+    "Madrid": (40.4168, -3.7038),
+    "Lisbon": (38.7223, -9.1393),
+    "Vienna": (48.2082, 16.3738),
+    "Zurich": (47.3769, 8.5417),
+    "Geneva": (46.2044, 6.1432),
+    "Brussels": (50.8503, 4.3517),
+    "Copenhagen": (55.6761, 12.5683),
+    "Stockholm": (59.3293, 18.0686),
+    "Oslo": (59.9139, 10.7522),
+    "Helsinki": (60.1699, 24.9384),
+    "Dublin": (53.3498, -6.2603),
+    "Edinburgh": (55.9533, -3.1883),
+    "Reykjavik": (64.1466, -21.9426),
+    "Munich": (48.1351, 11.5820),
+    "Frankfurt": (50.1109, 8.6821)
+}
+
 
 # Set page configs
 st.set_page_config(page_title="PacePilot Dashboard", layout="wide", page_icon="🏃‍♂️")
@@ -137,8 +191,9 @@ target_weekly_mileage = st.sidebar.slider(
 
 # Advanced Configuration
 with st.sidebar.expander("⚙️ Advanced Coordinates & Credentials"):
-    lat = st.number_input("Latitude", value=37.5665, format="%.4f")
-    lon = st.number_input("Longitude", value=126.9780, format="%.4f")
+    selected_city = st.selectbox("Select Target Training Location Location:", options=list(city_db.keys()), index=0)
+    lat, lon = city_db[selected_city]
+    st.write(f"📍 Coordinates: **{lat:.4f}, {lon:.4f}**")
     
     st.write("---")
     st.write("🔑 Credentials Overrides")
@@ -179,6 +234,14 @@ if "selected_draft_key" not in st.session_state:
 # ----------------------------------------------------
 st.header("⚡ Phase 1: Multi-Source Data Ingestion")
 with st.container():
+    st.write("### 🛠️ Ingestion Manual Overrides & Fallback Options")
+    override_col1, override_col2 = st.columns(2)
+    with override_col1:
+        manual_sleep = st.slider("Manual Override: Sleep Score", min_value=0, max_value=100, value=75)
+    with override_col2:
+        manual_hrv = st.selectbox("Manual Override: HRV Status", options=["BALANCED", "LOW", "UNBALANCED"], index=0)
+
+    st.write("")
     col1, col2 = st.columns([1, 4])
     with col1:
         ingest_btn = st.button("🔄 Ingest Current Context", use_container_width=True)
@@ -188,7 +251,7 @@ with st.container():
     if ingest_btn:
         with st.spinner("Ingesting biometrics (Garmin) and climate data (Open-Meteo)..."):
             try:
-                state = fetch_daily_context(lat, lon)
+                state = fetch_daily_context(lat, lon, fallback_sleep=manual_sleep, fallback_hrv=manual_hrv)
                 st.session_state["state"] = state
                 st.session_state["draft_1"] = None  # Reset recommendation
                 st.session_state["draft_2"] = None  # Reset feedback adjustment
@@ -294,14 +357,14 @@ if state:
     if draft_2:
         st.write("### ⚖️ Proposed Plan Comparison")
         with st.container():
-            st.write("#### 📋 Draft 1: Initial Recommendation")
-            render_schedule_cards(draft_1)
+            st.write("#### 📋 Draft 2: Feedback-Adjusted Plan")
+            render_schedule_cards(draft_2)
             
         st.divider()
         
         with st.container():
-            st.write("#### 📋 Draft 2: Feedback-Adjusted Plan")
-            render_schedule_cards(draft_2)
+            st.write("#### 📋 Draft 1: Initial Recommendation")
+            render_schedule_cards(draft_1)
     else:
         st.write("### 📋 Current Recommended Plan")
         with st.container():

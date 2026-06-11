@@ -110,14 +110,18 @@ def get_mock_biometrics() -> BiometricData:
     )
 
 
-def get_garmin_biometrics(email: Optional[str], password: Optional[str]) -> BiometricData:
+def get_garmin_biometrics(email: Optional[str], password: Optional[str], fallback_sleep: int = 75, fallback_hrv: str = "BALANCED") -> BiometricData:
     """
     Attempts to fetch biometric data from Garmin Connect.
-    If login or data extraction fails, falls back gracefully to mock values.
+    If login or data extraction fails, falls back gracefully to override values.
     """
     if not email or not password:
         logger.warning("Garmin email or password environment variables are not set.")
-        return get_mock_biometrics()
+        return BiometricData(
+            sleep_score=fallback_sleep,
+            hrv_status=fallback_hrv,
+            acute_training_load=480.0
+        )
 
     try:
         logger.info(f"Initializing Garmin Connect client for {email}...")
@@ -129,7 +133,7 @@ def get_garmin_biometrics(email: Optional[str], password: Optional[str]) -> Biom
         today_str = datetime.date.today().isoformat()
         
         # 1. Fetch Sleep Score
-        sleep_score = 75
+        sleep_score = fallback_sleep
         try:
             sleep_data = client.get_sleep_data(today_str)
             score = find_key_recursive(sleep_data, "sleepScore")
@@ -142,7 +146,7 @@ def get_garmin_biometrics(email: Optional[str], password: Optional[str]) -> Biom
             logger.error(f"Failed to fetch or parse Garmin sleep data: {e}")
 
         # 2. Fetch HRV Status
-        hrv_status = "BALANCED"
+        hrv_status = fallback_hrv
         try:
             hrv_data = client.get_hrv_data(today_str)
             status = find_key_recursive(hrv_data, "hrvReadinessStatus")
@@ -155,12 +159,11 @@ def get_garmin_biometrics(email: Optional[str], password: Optional[str]) -> Biom
             logger.error(f"Failed to fetch or parse Garmin HRV data: {e}")
 
         # 3. Fetch Acute Training Load
-        acute_training_load = None
+        acute_training_load = 480.0
         try:
             training_status = client.get_training_status(today_str)
             load = find_key_recursive(training_status, "acuteTrainingLoad")
             if isinstance(load, dict):
-                # Handles cases where load is returned as a dict e.g., {'currentLoad': 480.0}
                 load = load.get("currentLoad")
             if load is not None:
                 acute_training_load = float(load)
@@ -178,7 +181,11 @@ def get_garmin_biometrics(email: Optional[str], password: Optional[str]) -> Biom
 
     except Exception as e:
         logger.error(f"Garmin ingestion flow failed: {e}")
-        return get_mock_biometrics()
+        return BiometricData(
+            sleep_score=fallback_sleep,
+            hrv_status=fallback_hrv,
+            acute_training_load=480.0
+        )
 
 
 # ==========================================
@@ -249,7 +256,7 @@ def get_weather_data(latitude: float, longitude: float) -> WeatherData:
 # 4. Data Aggregation & Persistence
 # ==========================================
 
-def fetch_daily_context(lat: float, lon: float) -> EnvironmentState:
+def fetch_daily_context(lat: float, lon: float, fallback_sleep: int = 75, fallback_hrv: str = "BALANCED") -> EnvironmentState:
     """
     Central coordinator executing biometric and weather context ingestion.
     Combines observations into EnvironmentState and writes to state.json.
@@ -261,7 +268,7 @@ def fetch_daily_context(lat: float, lon: float) -> EnvironmentState:
     password = os.getenv("GARMIN_PASSWORD")
 
     # Ingest components sequentially
-    biometric = get_garmin_biometrics(email, password)
+    biometric = get_garmin_biometrics(email, password, fallback_sleep, fallback_hrv)
     weather = get_weather_data(lat, lon)
 
     # Wrap in EnvironmentState

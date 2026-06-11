@@ -190,6 +190,22 @@ def generate_fallback_with_feedback(
     )
 
 
+def get_weekly_mileage_proportions(num_runs: int) -> list[float]:
+    """
+    Returns the list of mileage proportions for each session slot based on weekly frequency.
+    """
+    if num_runs == 3:
+        return [0.20, 0.35, 0.45]
+    elif num_runs == 4:
+        return [0.20, 0.35, 0.20, 0.45]
+    elif num_runs == 5:
+        return [0.20, 0.20, 0.25, 0.15, 0.25]
+    elif num_runs == 6:
+        return [0.15, 0.20, 0.15, 0.15, 0.15, 0.20]
+    else:
+        return [0.12, 0.13, 0.10, 0.15, 0.12, 0.13, 0.25]
+
+
 def determine_weekly_frequency_and_slots(mileage: float) -> tuple[int, list[str]]:
     """
     Enforces frequency map thresholds based on weekly mileage.

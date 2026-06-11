@@ -15,7 +15,8 @@ from core.fallback import (
     generate_fallback_weekly_schedule,
     generate_fallback_weekly_schedule_with_feedback,
     determine_weekly_frequency_and_slots,
-    get_slot_parameters
+    get_slot_parameters,
+    get_weekly_mileage_proportions
 )
 
 
@@ -327,20 +328,36 @@ def generate_weekly_schedule_draft(settings: UserSettings, state: EnvironmentSta
         headers = {"Content-Type": "application/json"}
         params = {"key": api_key}
 
-        freq, slots = determine_weekly_frequency_and_slots(settings.target_weekly_mileage)
+        mileage = settings.target_weekly_mileage
+        num_runs, slots = determine_weekly_frequency_and_slots(mileage)
+        proportions = get_weekly_mileage_proportions(num_runs)
         
+        calculated_mins = []
+        for i in range(num_runs):
+            prop = proportions[i]
+            s = slots[i]
+            base_mins = int(mileage * prop * (5.0 if "Speed" in s else 6.0))
+            if heuristics['temp_warning']:
+                base_mins = int(base_mins * 0.8)
+            calculated_mins.append(base_mins)
+            
         slots_description = ""
         for slot in slots:
             pct, orig_zone, base_name = get_slot_parameters(settings.distance_goal, slot)
             slots_description += f"- \"{slot}\": Base intensity Zone {orig_zone}, volume split {int(pct*100)}%, Base workout: {base_name}\n"
 
+        duration_constraints = "\n".join([f"- Slot: '{slots[i]}', Enforced Target Duration: {calculated_mins[i]} minutes" for i in range(num_runs)])
+
         prompt_text = f"""
 You are the reasoning engine of PacePilot, an agentic AI running coach.
-Your task is to analyze the athlete's race distance goal and target weekly mileage along with environmental and recovery metrics to distribute the mileage across exactly {freq} sessions for the week.
+Your task is to analyze the athlete's race distance goal and target weekly mileage along with environmental and recovery metrics to distribute the mileage across exactly {num_runs} sessions for the week.
 
 You MUST return a list of workouts under the "schedule" key in your JSON response.
 For each item in the "schedule" array, you MUST populate the "session_slot" field with one of these exact slot names in order:
 {json.dumps(slots, indent=2)}
+
+You must generate exactly {num_runs} items in the schedule array matching these precise slots and mandatory duration limits:
+{duration_constraints}
 
 Session configuration guidelines:
 {slots_description}
@@ -364,8 +381,7 @@ Training Philosophy rules:
 1. 5K / 10K Goals: Short, high-intensity intervals (Zone 4/5 VO2 Max work), high stride frequencies, and shorter, faster long run sessions.
 2. Half Marathon / Marathon Goals: Progressive steady-state tempo runs (Zone 3 aerobic threshold), cumulative volume handling, and long slow base runs (Zone 2 mitochondrial development).
 3. Volume constraint: Distribute target weekly mileage to durations based on a baseline pace translation (approx 6.0 min/km for 5K/10K; 6.5 min/km for HALF/MARATHON).
-   Total duration minutes = target weekly mileage * pace translation.
-   For each session key, calculate the base planned duration as: total duration minutes * volume split.
+   For each session key, the duration_minutes field MUST match the enforced target duration listed above. Do not alter or guess the duration integers. Match the requested duration fields exactly.
 4. Safety constraints:
    - If Compounding Safety Lockout is True: You MUST set the adjusted workouts for ALL days to an Active Recovery Walk (Zone 1, 30 minutes). Rationale must explain the compounding safety lockout.
    - If Biometric Recovery Warning is True: Cap all heart rate intensities to Zone 1 or Zone 2, and reduce the durations of all workouts by 40% (i.e. scale by 0.6). High intensity sessions (e.g. speed/intervals/tempo) must be capped at Zone 1 (active walk).
